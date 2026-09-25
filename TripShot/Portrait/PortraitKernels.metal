@@ -1,4 +1,4 @@
-// 인물 보정용 Core Image Metal 커널: 피부색 가능도, 주파수 분리 합성.
+// 인물 보정용 Core Image Metal 커널: 피부색 가능도, 주파수 분리 합성, 얼굴 윤곽·눈 워프.
 // 빌드 설정 MTL_COMPILER_FLAGS=-fcikernel, MTLLINKER_FLAGS=-cikernel 필요(project.yml). 결과는 default.metallib.
 #include <metal_stdlib>
 using namespace metal;
@@ -14,6 +14,25 @@ inline float toGamma(float c) {
 // lo~hi 범위 안이면 1, 경계 ±soft에서 부드럽게 0으로.
 inline float softRange(float v, float lo, float hi, float soft) {
     return smoothstep(lo - soft, lo + soft, v) * (1.0f - smoothstep(hi - soft, hi + soft, v));
+}
+
+// 워프 가중치 w = (1 − (dist/r)²)², dist ≥ r이면 0. (Gustafsson 1993 국소 변형의 흔한 감쇠 곡선)
+inline float warpFalloff(float2 v, float r) {
+    float rr = max(r, 1e-4f);
+    float t2 = dot(v, v) / (rr * rr);
+    float u = 1.0f - t2;
+    return t2 < 1.0f ? u * u : 0.0f;
+}
+
+// 원형 밀기의 역방향 변위 성분: push = (cx, cy, r, k), dir = 단위 방향. 반환값 d·k·w (입력 좌표 = p − 이 값).
+inline float2 warpPush(float2 p, float4 push, float2 dir) {
+    return dir * (push.w * warpFalloff(p - push.xy, push.z));
+}
+
+// 원형 확대의 역방향 변위 성분: eye = (cx, cy, r, s). 반환값 (p − c)·s·w (입력 좌표 = p − 이 값 → 중심부 확대).
+inline float2 warpBulge(float2 p, float4 eye) {
+    float2 v = p - eye.xy;
+    return v * (eye.w * warpFalloff(v, eye.z));
 }
 
 extern "C" {
@@ -40,6 +59,20 @@ float4 skinLikelihood(sample_t s) {
 float4 frequencyCombine(sample_t input, sample_t low, sample_t mid) {
     float3 outRGB = low.rgb + (input.rgb - mid.rgb);
     return float4(outRGB, input.a);
+}
+
+// 얼굴 윤곽·눈 워프(역방향 변위). 출력 픽셀 p → 입력 좌표 p' = p − Σ d·k·w − Σ (p − c)·s·w.
+// 얼굴 하나당 1회 적용한다. 쓰지 않는 밀기·확대는 k = 0 / s = 0으로 넘긴다(변위 0).
+// TODO(검증): 헬퍼 함수 호출이 -fcikernel 빌드에서 문제되면 본문에 인라인한다(skinLikelihood와 같은 조건).
+float2 faceWarp(float4 push0, float4 push1, float4 push2, float4 push3, float4 push4, float4 push5,
+                float2 dir0, float2 dir1, float2 dir2, float2 dir3, float2 dir4, float2 dir5,
+                float4 eyeL, float4 eyeR,
+                destination dest) {
+    float2 p = dest.coord();
+    float2 shift = warpPush(p, push0, dir0) + warpPush(p, push1, dir1) + warpPush(p, push2, dir2)
+                 + warpPush(p, push3, dir3) + warpPush(p, push4, dir4) + warpPush(p, push5, dir5);
+    float2 bulge = warpBulge(p, eyeL) + warpBulge(p, eyeR);
+    return p - shift - bulge;
 }
 
 }
