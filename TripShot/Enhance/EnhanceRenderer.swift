@@ -62,16 +62,24 @@ final class EnhanceRenderer {
     // MARK: 저장용
 
     /// 풀해상도 렌더. `outputColorSpace`는 원본 색공간을 넘긴다(`colorSpace(of:)` 참고) — sRGB면 sRGB, P3면 P3.
-    /// 인코딩(HEIF/JPEG)과 메타데이터 복사는 R1-S2 담당이라 여기서는 CGImage까지만 만든다.
+    /// 인코딩(HEIF/JPEG)과 메타데이터 복사는 `ImageEncoder`·`ImageMetadata`(R1-S2) 담당이라 여기서는 CGImage까지만 만든다.
     /// 입력 CIImage는 방향이 이미 반영된 상태여야 한다(비파괴 편집 입력은 `.oriented(...)` 후 전달).
-    /// TODO(검증): 10비트 HEIF 원본의 계조 보존이 필요하면 format을 .RGBA16으로 바꾸고 R1-S2 인코더와 맞출 것.
-    func renderFullResolution(ciImage: CIImage, params: PresetParams, outputColorSpace: CGColorSpace) -> CGImage? {
+    /// - Parameters:
+    ///   - pixelFormat: 출력 CGImage 픽셀 형식. 기본 `.RGBA8`(JPEG용). 10비트 HEIF 원본의 계조를 지키려면 `.RGBA16`.
+    ///   - adjustContext: 이 렌더에만 적용할 컨텍스트 변경(예: 사진별 수평 각도). 공유 `pipelineContext`는 바꾸지 않는다.
+    func renderFullResolution(ciImage: CIImage,
+                              params: PresetParams,
+                              outputColorSpace: CGColorSpace,
+                              pixelFormat: CIFormat = .RGBA8,
+                              adjustContext: ((inout PipelineContext) -> Void)? = nil) -> CGImage? {
         lock.lock(); defer { lock.unlock() }
         return autoreleasepool { () -> CGImage? in
-            let output = EnhancePipeline.apply(params, to: ciImage, context: pipelineContext)
+            var context = pipelineContext
+            adjustContext?(&context)
+            let output = EnhancePipeline.apply(params, to: ciImage, context: context)
             let extent = output.extent
             guard !extent.isInfinite, !extent.isEmpty else { return nil }
-            return ciContext.createCGImage(output, from: extent, format: .RGBA8, colorSpace: outputColorSpace)
+            return ciContext.createCGImage(output, from: extent, format: pixelFormat, colorSpace: outputColorSpace)
         }
     }
 
