@@ -1,3 +1,4 @@
+// 하단 탭 4개(촬영·보정·쇼츠·설정) 루트 화면.
 import SwiftUI
 
 struct RootTabView: View {
@@ -25,4 +26,5 @@ struct RootTabView: View {
 
 #Preview {
     RootTabView()
+        .environmentObject(AppServices())
 }

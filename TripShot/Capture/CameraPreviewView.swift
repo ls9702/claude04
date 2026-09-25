@@ -1,7 +1,7 @@
 import AVFoundation
 import SwiftUI
 
-/// P0: AVCaptureVideoPreviewLayer 기반 프리뷰. P5에서 MTKView(Metal) 프리뷰로 교체.
+/// R1-S0: AVCaptureVideoPreviewLayer 기반 프리뷰. R1-S4에서 MTKView(Metal) 프리뷰로 교체.
 struct CameraPreviewView: UIViewRepresentable {
     let session: AVCaptureSession
     var onTap: ((CGPoint) -> Void)?

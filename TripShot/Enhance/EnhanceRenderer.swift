@@ -46,11 +46,23 @@ final class EnhanceRenderer {
     /// 결과 UIImage는 `.up` 방향이며 화면에서 원본과 같은 방향으로 보인다.
     func previewImage(from ui: UIImage, params: PresetParams, maxDimension: CGFloat = 1024) -> UIImage? {
         lock.lock(); defer { lock.unlock() }
-        return autoreleasepool { () -> UIImage? in
+        return renderPreview(from: ui, params: params, maxDimension: maxDimension, context: pipelineContext)
+    }
+
+    /// 호출 측이 만든 컨텍스트로 프리뷰를 렌더한다(예: `AppServices.pipelineContext()` — 인물 모드 스위치 반영).
+    /// 공유 `pipelineContext`는 바꾸지 않는다.
+    func previewImage(from ui: UIImage, params: PresetParams, maxDimension: CGFloat = 1024, context: PipelineContext) -> UIImage? {
+        lock.lock(); defer { lock.unlock() }
+        return renderPreview(from: ui, params: params, maxDimension: maxDimension, context: context)
+    }
+
+    /// 프리뷰 렌더 본체. 잠금은 호출 측이 잡는다.
+    private func renderPreview(from ui: UIImage, params: PresetParams, maxDimension: CGFloat, context: PipelineContext) -> UIImage? {
+        autoreleasepool { () -> UIImage? in
             guard let source = Self.ciImage(from: ui) else { return nil }
             let upright = source.oriented(Self.cgOrientation(ui.imageOrientation))
             let small = Self.downsample(upright, maxDimension: maxDimension)
-            let output = EnhancePipeline.apply(params, to: small, context: pipelineContext)
+            let output = EnhancePipeline.apply(params, to: small, context: context)
             let extent = output.extent
             guard !extent.isInfinite, !extent.isEmpty,
                   let cg = ciContext.createCGImage(output, from: extent, format: .RGBA8, colorSpace: Self.previewColorSpace)

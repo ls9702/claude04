@@ -1,7 +1,9 @@
+// 촬영 탭(앱 시작 화면): 카메라 프리뷰·모드 토글·셔터.
 import SwiftUI
 
 struct CaptureView: View {
     @StateObject private var camera = CameraService()
+    @EnvironmentObject private var services: AppServices
     @State private var mode: Mode = .photo
     @State private var permissionDenied = false
     @Environment(\.scenePhase) private var scenePhase
@@ -39,7 +41,7 @@ struct CaptureView: View {
                 Spacer()
 
                 if mode == .shorts {
-                    Text("쇼츠 촬영 보조는 P1에서 구현됩니다")
+                    Text("쇼츠 촬영 보조는 릴리즈 2에서 추가됩니다")
                         .font(.footnote).foregroundStyle(.secondary)
                         .padding(.bottom, 8)
                 }
@@ -68,9 +70,14 @@ struct CaptureView: View {
             }
         }
         .task {
+            // 앱 전역 저장·위치 서비스 주입(R1-S3). 촬영 저장은 PhotoSaver, GPS는 LocationProvider를 쓴다.
+            camera.photoSaver = services.photoSaver
+            camera.locationProvider = services.locationProvider
             let cam = await Permissions.requestCamera()
             _ = await Permissions.requestMicrophone()
             permissionDenied = !cam
+            // 위치는 "앱 사용 중" 권한만 요청한다. 거부해도 위치 없이 촬영·저장된다(PLAN §3.4).
+            services.locationProvider.start()
             guard cam else { return }
             camera.configureIfNeeded()
             camera.start()

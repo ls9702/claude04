@@ -4,6 +4,35 @@
 
 ---
 
+## R1-S3 앨범 보정 화면 · 2026-09-25 · 서브에이전트(Opus 5.5) 작성분 · 결과: **통과 (수정 1건, 문구)**
+
+### 필수 항목
+- 사진 보관함·메타데이터: 저장은 전부 R1-S2 `PhotoSaver` 경유. 읽기는 `PHImageManager`(다운샘플)와 `PHContentEditingInput`(편집값 복원)뿐. 충족.
+- 원본 손상 경로: 없음. 일괄 저장 취소는 현재 장 완료 후 중단(트랜잭션 도중 취소 없음). 충족.
+- 외부 패키지: 없음. project.yml 변경 없음.
+- 큐 분리: ViewModel `@MainActor`, 렌더는 `Task.detached`, 결과 반영은 메인. PhotoKit 콜백은 continuation으로 한 번만 재개(ImageRequestBox). 충족.
+- 권한 거부: 사진 권한 거부 시 목록 비우고 안내. 충족.
+- 설계 일치: 인물 모드 스위치는 `AppServices.portraitModeEnabled`(앱 상태)로 hook을 nil/placeholder 전환(R1-S1 권고 반영). 프리셋 스트립·슬라이더 7종·전/후 길게 누르기·비파괴/사본/일괄 저장·진행률·취소 모두 있음. 충족.
+
+### 직접 수정한 것
+- `CaptureView`의 쇼츠 모드 안내 문구 "P1에서" → "릴리즈 2에서".
+
+### 잘한 점
+- 메모리: ViewModel은 1024px 다운샘플만 보관(NSCache 10장). 풀해상도는 PhotoSaver가 파일에서 한 장씩.
+- 이전 TripShot 편집이 있는 사진은 `.unadjusted` 원본으로 프리뷰해 저장(원본에서 재렌더)과 일치.
+- 사용자가 손댄 사진은 늦게 도착한 복원값이 덮어쓰지 않음(`touchedIDs`).
+
+### 권고 (다음 단계)
+- (R1-S5) 저장 경로는 렌더러의 공유 컨텍스트(portraitStage=nil)를 쓴다. 인물 보정이 실제로 생기면 `PhotoSaver`가 `PipelineContext`를 인자로 받도록 확장(ViewModel에 TODO 표시됨).
+- (B1 실기기) iCloud 전용 사진의 편집값 복원이 원본 전체를 내려받는다. 체감이 크면 로컬 사진만 복원.
+- (R1-S4) `AppServices.selectedPresetID`를 촬영 탭 프리셋 스트립과 공유할 것.
+
+### 컴파일 확신이 낮은 지점 (Mac 빌드 시 우선 확인)
+- `PhotosPicker(selection:maxSelectionCount:selectionBehavior:matching:preferredItemEncoding:photoLibrary:label:)` 인자 순서, `.ordered`.
+- `withTaskCancellationHandler { } onCancel: { }` 트레일링 클로저 문법, `@escaping @MainActor () -> PipelineContext` 기본값.
+- `PHContentEditingInput.adjustmentData` 옵셔널 여부.
+- 동기 `@MainActor` XCTest 메서드.
+
 ## R1-S2 저장·메타데이터 · 2026-09-25 · 서브에이전트(Opus 5.5) 작성분 · 결과: **통과 (수정 없음)**
 
 ### 필수 항목

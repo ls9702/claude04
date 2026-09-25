@@ -5,7 +5,7 @@ import ImageIO
 import Photos
 import UIKit
 
-/// P0: 프리뷰 + 사진 촬영 + 사진 앱 저장. (Metal 프리뷰·프리셋 적용은 R1-S4, 영상 녹화는 R2-S2)
+/// R1-S0: 프리뷰 + 사진 촬영 + 사진 앱 저장. (Metal 프리뷰·프리셋 적용은 R1-S4, 영상 녹화는 R2-S2)
 final class CameraService: NSObject, ObservableObject {
     let session = AVCaptureSession()
     private let sessionQueue = DispatchQueue(label: "tripshot.camera.session")
