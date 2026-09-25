@@ -14,3 +14,5 @@ Package.resolved
 scripts/device.local
 .env.local
 .claude/settings.local.json
+# XcodeGen이 project.yml의 info.properties로 생성 (커밋하지 않음)
+TripShot/Info.plist
