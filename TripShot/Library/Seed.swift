@@ -28,18 +28,22 @@ enum Seed {
     }
 
     private static func seedPresets(_ ctx: ModelContext) {
-        // §3.2 기본 6종. 값은 P4에서 실제 보정 결과를 보며 조정.
+        for (i, item) in builtInPresets.enumerated() {
+            ctx.insert(Preset(name: item.name, params: item.params, isBuiltIn: true, sortOrder: i))
+        }
+    }
+
+    /// §3.2 기본 6종. 값은 R1-S3 실사용에서 실제 보정 결과를 보며 조정.
+    /// 흑백의 lutName "mono"는 Resources/LUT/mono.cube 파일명과 일치해야 한다(테스트로 확인).
+    static let builtInPresets: [(name: String, params: PresetParams)] = {
         var sky = PresetParams(); sky.vibrance = 25; sky.contrast = 10; sky.clarity = 10; sky.sharpness = 25
         var golden = PresetParams(); golden.temperature = 30; golden.shadows = 15; golden.vibrance = 15; golden.vignette = 15
         var night = PresetParams(); night.lowLight = 70; night.shadows = 30; night.highlights = -20; night.sharpness = 10
         var food = PresetParams(); food.temperature = 10; food.vibrance = 30; food.clarity = 15; food.sharpness = 30
         var indoor = PresetParams(); indoor.exposure = 10; indoor.temperature = -10; indoor.shadows = 20
         var mono = PresetParams(); mono.lutName = "mono"; mono.contrast = 15; mono.clarity = 20
-        let list: [(String, PresetParams)] = [("맑은 하늘", sky), ("골든아워", golden), ("야경", night), ("음식", food), ("실내", indoor), ("흑백", mono)]
-        for (i, (name, p)) in list.enumerated() {
-            ctx.insert(Preset(name: name, params: p, isBuiltIn: true, sortOrder: i))
-        }
-    }
+        return [("맑은 하늘", sky), ("골든아워", golden), ("야경", night), ("음식", food), ("실내", indoor), ("흑백", mono)]
+    }()
 }
 
 enum TemplateLoader {
