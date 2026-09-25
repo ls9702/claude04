@@ -1,6 +1,6 @@
 # 여행 사진·쇼츠 iPhone 앱 개발 계획서
 
-작성일: 2026-09-25 · 상태: **v0.2 확정 (논의 반영, 실행 착수)** · 결정 이력은 §11 참조
+작성일: 2026-09-25 · 상태: **v0.3 논의 중 (추가 기능·방향성 토론)** · 결정 이력은 §11 참조
 
 ---
 
@@ -29,7 +29,7 @@
 | 제약 | 내용 | 대응 |
 |---|---|---|
 | **Mac + Xcode 필수** | iOS 앱은 macOS의 Xcode에서만 빌드·설치 가능. 이 개발 환경(Linux)에서는 Swift 코드 작성·구조 검토는 가능하지만 **빌드·시뮬레이터·실기기 테스트는 불가**. | 코드는 이 저장소에서 작성 → 사용자 Mac에서 `git pull` 후 Xcode로 빌드·설치. 빌드 오류 로그를 붙여 주시면 수정하는 순환 방식. |
-| **서명 방식 (무료 계정 확정)** | 무료 Apple ID 서명은 **7일 후 앱 실행이 막힘**. 동시 3개 앱 제한. 일부 권한(Push, iCloud 등)은 사용 불가하나 이 앱은 카메라·사진·마이크만 필요해 문제 없음. | ① 여행 출발 직전 Mac에서 다시 설치(케이블 1분) ② **AltStore**(무료)를 Mac에 두면 같은 Wi-Fi에서 자동 갱신 가능. 계획서 §10 P0에 재설치 절차 포함. 여행 기간이 7일을 넘기면 ②를 권장. |
+| **서명 방식 (무료 계정 확정)** | 무료 Apple ID 서명은 **7일 후 앱 실행이 막힘**. 동시 3개 앱 제한. 일부 권한(Push, iCloud 등)은 사용 불가하나 이 앱은 카메라·사진·마이크만 필요해 문제 없음. 참고: 유료 Apple Developer Program은 **연 129,000원**(미국 $99), 서명 1년 유효·TestFlight 사용 가능. | ① 여행 출발 직전 Mac에서 다시 설치(케이블 1분) ② **AltStore**(무료)를 Mac에 두면 같은 Wi-Fi에서 자동 갱신 가능. 계획서 §10 P0에 재설치 절차 포함. 여행 기간이 7일을 넘기면 ②를 권장. |
 | **기기·OS (iPhone 12 Pro, iOS 27)** | A14 칩, 후면 광각·초광각·망원(2×), LiDAR, ProRAW 지원, **ProRes 미지원**, 4K60 촬영 가능, Dolby Vision HDR 촬영 가능. Core ML 경량 모델은 실시간 처리 가능. | 최소 배포 버전 **iOS 26**(현재 27이므로 최신 API 자유롭게 사용). 단, Xcode는 macOS 최신(Tahoe 이상)이어야 iOS 27 SDK 사용 가능 → MacBook Air M2 OS 업데이트 확인 필요. |
 | **실시간 처리 성능** | 라이브 보정은 30fps 이상 유지해야 함. 딥러닝 보정(Zero-DCE 등)은 프리뷰 해상도에서만 실시간. | 프리뷰: 저해상도 + 가벼운 필터. 촬영 결과: 풀해상도에 무거운 필터 적용(수 초 허용). |
 | **발열·배터리** | 4K 촬영 + 실시간 필터 + 안정화는 발열이 큼. | 프리뷰 필터는 Metal로, 촬영 시 필터는 후처리로 분리. 열 상태(`ProcessInfo.thermalState`) 감시해 품질 자동 하향. |
@@ -148,8 +148,7 @@
 - 전환: 컷, 크로스 디졸브, 페이드. 전환 시간 0.3초 기본.
 - 텍스트: 제목 카드, 위치·날짜 스탬프(사진 메타데이터의 GPS → 지명 역지오코딩), 자막.
 - 자동 자막: Speech 프레임워크로 한국어 초안 생성 → 수정.
-- 음악: **YouTube 오디오 라이브러리**(무료·저작권 안전)에서 Mac/폰으로 받은 파일을 파일 앱에서 가져오기. YouTube 영상 오디오 추출은 약관 위반이라 지원하지 않음. BPM 감지(온셋 분석)로 컷 포인트 제안.
-- **YouTube 업로드 연동(Q7)**: 내보내기 후 앱에서 바로 **YouTube Data API v3**로 업로드(제목·설명·공개 범위·#Shorts). 세로 9:16·3분 이내면 자동으로 Shorts로 분류됨. 상세는 §5.6.
+- 음악: **YouTube에서 음원만 가져와 사용**(Q7, 업로드는 하지 않음). 앱 안에서 YouTube 오디오를 직접 내려받는 것은 iOS에서 기술적으로 불안정하고 YouTube 약관에도 어긋나므로, **Mac에서 추출 → iCloud Drive 폴더 → 앱이 자동 인식**하는 구조로 한다. 상세는 §5.6. BPM 감지(온셋 분석)로 컷 포인트 제안.
 - 규격별 렌더 프리셋: H.264/HEVC, 비트레이트(1080p 12Mbps 기본), 색공간 SDR(HDR은 옵션).
 
 ### 5.5 템플릿 (기본 제공 + 직접 편집)
@@ -160,16 +159,15 @@
 | 음식 투어 | 25s | 간판 2s → 메뉴 3s → 조리/서빙 5s → 클로즈업 4s×3 → 리액션 3s |
 | 자유 | – | 규격만 정하고 샷 제한 없음 |
 
-### 5.6 YouTube 업로드 연동 설계
+### 5.6 YouTube 음원 가져오기 설계 (Q7 정정: 업로드 아님)
 | 항목 | 내용 |
 |---|---|
-| 방식 | Google Cloud 프로젝트 생성 → YouTube Data API v3 활성화 → **iOS용 OAuth 클라이언트 ID** 발급 → 앱에서 Google Sign-In(ASWebAuthenticationSession) → `videos.insert` 재개 가능 업로드 |
-| 할당량 | 기본 일 10,000 유닛, 업로드 1건 = 1,600 유닛 → **하루 6편**. 개인용으로 충분 |
-| 앱 검증 | OAuth 동의 화면을 "테스트" 모드로 두고 본인 계정을 테스트 사용자로 등록하면 Google 심사 없이 사용 가능. 토큰은 7일마다 재로그인 필요(테스트 모드 제약) → 앱에서 만료 안내 |
-| 업로드 UI | 내보내기 완료 화면에서 제목(여행명·날짜 자동), 설명, 공개/일부공개/비공개, 태그 입력 → 백그라운드 업로드 → 완료 시 링크 표시 |
-| 실패 대응 | 업로드 실패 시 파일은 사진 앱에 이미 저장돼 있으므로 YouTube 앱 공유 시트로 대체 경로 제공 |
-| 보안 | 클라이언트 ID는 앱 번들에 포함(iOS 클라이언트는 시크릿 없음). 토큰은 Keychain 저장 |
-| 설정 작업 | Google Cloud 콘솔 설정은 사용자 계정으로 직접 해야 함 → 단계별 스크린샷 가이드 `docs/YOUTUBE_SETUP.md` 제공 예정 |
+| 원칙 | 결과물은 어디에도 올리지 않는 **개인 감상용**이므로 저작권 분쟁 소지는 낮다. 다만 YouTube 약관은 다운로드를 금지하므로 **앱이 YouTube에 직접 접속하는 기능은 넣지 않는다.** 추출은 사용자 Mac에서 사용자 판단으로 수행 |
+| Mac 쪽 | `yt-dlp`(오픈소스, Unlicense) + `ffmpeg`로 URL → m4a/mp3 추출하는 **원클릭 스크립트**(`tools/fetch-audio.sh`)를 제공. 출력 폴더는 `iCloud Drive/TripShot/Music/` |
+| 폰 쪽 | 앱의 **음원 라이브러리** 탭이 위 iCloud Drive 폴더를 자동 인식(파일 앱 보안 스코프 북마크 1회 허용). 파일이 늘면 자동 반영. 파일 앱·AirDrop·공유 시트로 넣은 음원도 동일하게 인식 |
+| 분석 | 가져온 음원은 BPM·비트 위치·구간(인트로/드롭)을 온셋 분석으로 추출해 저장 → 템플릿 샷 길이를 비트에 맞춰 자동 정렬(§6 B1) |
+| 대안 | 폰만 있을 때: iOS 단축어로 음원 URL을 Mac에 보내면 Mac이 백그라운드로 추출(선택 기능) |
+| 하지 않는 것 | 앱 내 YouTube 검색·재생·다운로드, 업로드 연동(이전 v0.2의 YouTube Data API 설계는 폐기) |
 
 ---
 
@@ -190,6 +188,20 @@
 | ~~A9~~ | 단축어(Shortcuts) 연동 | – | 제외 |
 | A10 | **저장공간 관리** | 4K 원본이 쌓이므로 조립 완료 클립 정리 제안 | 여유 시 |
 
+### 6.1 추가 제안 (v0.3 토론용) — 채택 여부 결정 필요
+| # | 제안 | 왜 필요한가 | 난이도 | 추천 |
+|---|---|---|---|---|
+| B1 | **비트 싱크 자동 컷** | 음원의 비트 위치에 샷 경계를 맞추면 편집 감각이 크게 달라짐. 템플릿 샷 길이를 비트 단위로 반올림 | 중 | **채택** |
+| B2 | **레퍼런스 쇼츠 따라 찍기** | 마음에 든 쇼츠 영상 파일을 넣으면 장면 전환을 감지해 컷 길이 시퀀스를 뽑아 **템플릿 자동 생성**. 남의 편집 리듬을 내 여행에 적용 | 중 | **채택** |
+| B3 | **Live Photo → B-roll 클립** | 이미 찍은 Live Photo의 3초 영상을 클립으로 변환. 사진만 찍은 날도 쇼츠가 됨 | 낮음 | **채택** |
+| B4 | **사진 슬라이드 쇼츠 (Ken Burns)** | 영상이 없는 날을 위해 사진 5~10장에 줌·팬 모션을 넣어 쇼츠 생성 | 낮음 | **채택** |
+| B5 | **촬영 직후 품질 판정** | 흔들림(라플라시안 분산), 노출 클리핑, 눈 감음(Vision) 검출 → "다시 찍기" 배지. 현장에서 놓친 컷을 나중에 발견하는 일 방지 | 중 | **채택** |
+| B6 | **본인 얼굴 프로필** | 인물 보정 설정을 얼굴별로 저장. Vision 특징점(feature print) 유사도로 본인 얼굴을 인식해 **내 설정만 자동 적용**, 동행은 약하게 | 중 | 채택 권장 |
+| B7 | **타임랩스/하이퍼랩스 샷** | 템플릿 샷 종류에 타임랩스 추가(이동·일몰 장면) | 낮음 | 채택 권장 |
+| B8 | **사진 다중 규격 자동 크롭** | 한 장을 9:16·4:5·1:1로 현저성 기반 자동 크롭해 일괄 저장 | 낮음 | 여유 시 |
+| B9 | **촬영 중 상태 경고** | 배터리·저장공간·열 상태를 촬영 화면에 표시, 임계치에서 경고 | 낮음 | **채택** (P8에 포함) |
+| B10 | **프로젝트 자동 백업** | 무료 서명 재설치·기기 교체 시 앱 데이터 보존을 위해 SwiftData·프리셋을 iCloud Drive 폴더로 매일 내보내기 | 낮음 | **채택** (A2 확장) |
+
 ---
 
 ## 7. 아키텍처 및 모듈
@@ -204,7 +216,7 @@ TripShot.xcodeproj
 │  ├─ Compose/             AVComposition 빌더, 전환/텍스트/자막/음악, 내보내기
 │  ├─ Library/             PhotoKit 접근, 프로젝트(여행) 관리, SwiftData
 │  ├─ Portrait/            얼굴 랜드마크, 피부 마스크, 메시 워프(Metal)
-│  ├─ Publish/             YouTube OAuth·재개 가능 업로드
+│  ├─ Music/               iCloud Drive 음원 라이브러리, BPM·비트 분석
 │  └─ Shared/              공통 UI, 유틸, 색공간 헬퍼
 ├─ Resources/              기본 LUT(.cube), Core ML 모델(.mlpackage), 템플릿 JSON
 └─ Tests/                  파이프라인 단위 테스트, 렌더 스냅샷 테스트
@@ -222,7 +234,8 @@ FormatPreset    id, platform, width, height, maxSeconds, safeTop, safeBottom, sa
 Template        id, name, formatPresetId, shots: [ShotSpec(name, hint, targetSeconds, order)]
 ShortsProject   id, tripId, templateId, formatPresetId, status, createdAt
 Clip            id, projectId, shotIndex, assetLocalId, inSec, outSec, speed, muted
-ExportRecord    id, projectId, assetLocalId, formatPresetId, exportedAt, youtubeVideoId?
+ExportRecord    id, projectId, assetLocalId, formatPresetId, exportedAt
+MusicTrack      id, fileBookmark, title, durationSec, bpm, beatsJSON, sectionsJSON
 ```
 
 ---
@@ -250,7 +263,7 @@ ExportRecord    id, projectId, assetLocalId, formatPresetId, exportedAt, youtube
 | **YUCIHighPassSkinSmoothing** | Core Image 기반 하이패스 피부 보정 구현 (§4.4) | MIT | https://github.com/YuAo/YUCIHighPassSkinSmoothing |
 | **GPUPixel** | 크로스플랫폼 실시간 뷰티 필터(피부·미백·얼굴 축소·눈 확대). OpenGL 기반이라 **알고리즘만 참조**해 Metal로 재구현 | 저장소 LICENSE 확인 필요 | https://github.com/pixpark/gpupixel |
 | **GPUImage beauty filter PR #2272** | 양방향 필터 기반 피부 보정 셰이더 | BSD-3 | https://github.com/BradLarson/GPUImage/pull/2272 |
-| **YouTube Data API v3** | 업로드 연동 (§5.6) | Google API 약관 | https://developers.google.com/youtube/v3 |
+| **yt-dlp** + **ffmpeg** | Mac에서 음원 추출 스크립트 (§5.6) | Unlicense / LGPL | https://github.com/yt-dlp/yt-dlp |
 | **AltStore** | 무료 계정 7일 서명 자동 갱신 | AGPL (도구로만 사용) | https://altstore.io |
 | **Zero-DCE / Zero-DCE++** | 저조도 개선 경량 모델(원 논문 CVPR 2020). Core ML 변환 대상 | 비상업 연구용 라이선스 → **개인 사용은 가능, 확인 필요** | https://github.com/Li-Chongyi/Zero-DCE |
 | **CoreML-Models (john-rocky)** | PyTorch → Core ML 변환 스크립트·샘플 앱 모음(Zero-DCE 포함) | 저장소별 확인 | https://github.com/john-rocky/CoreML-Models |
@@ -275,7 +288,7 @@ ExportRecord    id, projectId, assetLocalId, formatPresetId, exportedAt, youtube
 | **P4 저조도·고급 보정** | Zero-DCE++ Core ML 변환(Mac에서 coremltools 실행)·통합, Dehaze, Clarity 커널, 수평 자동 보정 | 야경 사진이 눈에 띄게 개선, 풀해상도 3초 이내(A14 기준) | 3일 |
 | **P5 쇼츠 촬영 보조** | 규격 프리셋, 템플릿, 세이프존 오버레이, 샷 카드·카운트다운, 수평계, 클립 체크리스트 | 템플릿대로 7개 클립 촬영 완료 | 3일 |
 | **P6 조립·내보내기** | Compose 빌더, 트림·전환·텍스트·음악, 규격별 렌더, 공유 시트 | 30초 Reels가 1080×1920으로 내보내지고 Instagram 앱에서 열림 | 4일 |
-| **P7 YouTube 업로드·스탬프** | Google OAuth, 재개 가능 업로드, 업로드 UI, 위치·날짜 스탬프(A5), 여행 프로젝트 정리(A1), 프리셋 백업(A2) | 앱에서 업로드한 Shorts가 YouTube에 게시됨 | 3일 |
+| **P7 음원 라이브러리·스탬프** | Mac 추출 스크립트, iCloud Drive 폴더 인식, BPM·비트 분석, 비트 정렬, 위치·날짜 스탬프(A5), 여행 프로젝트 정리(A1), 프리셋 백업(A2) | YouTube에서 받은 음원이 앱에 뜨고 비트에 맞춰 컷이 정렬됨 | 3일 |
 | **P8 안정화·성능** | 열 관리, 메모리(4K 프레임), 배터리, 오류 처리, 테스트 | 20분 연속 촬영에 문제 없음 | 2일 |
 
 합계 약 **25일** (Mac 빌드 왕복 시간 별도). P1→P2→P3→P4, P5→P6→P7은 순차. P2~P4와 P5는 병행 가능.
@@ -289,18 +302,15 @@ ExportRecord    id, projectId, assetLocalId, formatPresetId, exportedAt, youtube
 | # | 질문 | 결정 | 반영 |
 |---|---|---|---|
 | Q1 | Mac/Xcode | **MacBook Air M2 보유** | iOS 27 SDK를 위해 macOS 최신 버전·Xcode 최신 설치 필요(§2) |
-| Q2 | 개발자 계정 | **무료 Apple ID** | 7일 재설치 제약 → AltStore 자동 갱신 안내, 재설치 절차 문서화(§2, P0) |
+| Q2 | 개발자 계정 | **무료 Apple ID** (유료는 연 129,000원) | 7일 재설치 제약 → AltStore 자동 갱신 안내, 재설치 절차 문서화(§2, P0) |
 | Q3 | 기기 | **iPhone 12 Pro, iOS 27** | 최소 iOS 26. ProRes 제외, ProRAW·4K60·초광각·망원 사용 가능(§2) |
 | Q4 | 타겟 플랫폼 | 위임 → **9:16 기본, 4:5/1:1/16:9 옵션** | §5.2 |
 | Q5 | 촬영 해상도 | 위임 → **세로 4K30 SDR HEVC 고정, 60fps는 슬로모 옵션** | §5.2 |
 | Q6 | 딥러닝 저조도 보정 | 가능하면 → **포함 (P4)**. Core ML 변환은 Mac에서 수행 | §4.2, §10 |
-| Q7 | 음악/연동 | **YouTube 연동** → 업로드 API 연동 + 음원은 YouTube 오디오 라이브러리 파일 가져오기 | §5.4, §5.6 |
+| Q7 | 음악 | **YouTube에서 음원만 가져오기, 업로드 없음** (v0.2 해석 정정) → Mac 추출 스크립트 + iCloud Drive 음원 라이브러리 | §5.4, §5.6 |
 | Q8 | 자동 자막 | **제외** | Speech 프레임워크 사용 안 함. 텍스트 오버레이는 수동 입력만 |
 | Q9 | 추가 기능 | **인물 보정(피부·얼굴 날렵하게) 추가**. A1·A2·A3·A5 채택, A4·A6·A10 여유 시, A7·A8·A9 제외 | §4.4, §6 |
 | Q10 | 앱 이름 | 위임 → 임시 **TripShot** (번들 ID `com.<본인>.tripshot`). 아이콘은 P0에서 SF Symbols 기반 임시 제작 | §7 |
-
-### 11.1 Q7 해석 확인
-"YouTube 연동"을 ① 완성한 쇼츠를 앱에서 바로 YouTube에 업로드, ② 배경음악은 YouTube 오디오 라이브러리에서 받은 파일 사용으로 해석했다. YouTube 영상의 오디오를 앱이 직접 추출하는 기능은 약관 위반이라 넣지 않는다. 다른 의미였다면 알려주시기 바란다.
 
 ## 12. 비기능 요구사항
 - **성능**: 프리뷰 필터 30fps 이상(1080p 프리뷰), 풀해상도 사진 보정 3초 이내, 30초 쇼츠 내보내기 1분 이내(HEVC 하드웨어 인코딩).
@@ -314,4 +324,4 @@ ExportRecord    id, projectId, assetLocalId, formatPresetId, exportedAt, youtube
 ## 13. 다음 행동
 1. ~~§11 답변~~ → v0.2 반영 완료.
 2. **P0 착수**: Xcode 프로젝트·모듈 구조를 저장소에 커밋하고 `docs/MAC_SETUP.md`(Xcode 설치, 무료 서명, iPhone 설치, 7일 재설치, AltStore) 제공.
-3. 사용자 측 준비: macOS·Xcode 최신 업데이트, iPhone 개발자 모드 켜기(설정 → 개인정보 보호 및 보안 → 개발자 모드), Google Cloud 프로젝트는 P7 전까지.
+3. 사용자 측 준비: macOS·Xcode 최신 업데이트, iPhone 개발자 모드 켜기(설정 → 개인정보 보호 및 보안 → 개발자 모드), Mac에 Homebrew로 `yt-dlp ffmpeg` 설치(P7 전까지).
