@@ -1,6 +1,6 @@
 # 개인 건강관리 앱 (프로토타입) 개발 계획서
 
-작성일: 2026-09-25 · 상태: **논의용 초안 (v0.1)** · 실행 전 합의 필요 항목은 §10 참조
+작성일: 2026-09-25 · 상태: **v0.2 확정 (논의 반영, 실행 착수)** · 결정 이력은 §10 참조
 
 ---
 
@@ -32,7 +32,7 @@
 
 | 제약 | 사실 | 설계 대응 |
 |---|---|---|
-| **걸음수 자동 수집 불가 (웹)** | 브라우저는 폰의 만보계(HealthKit/Health Connect)에 접근할 수 없다. Google Fit REST API는 2024년 이후 신규 사용이 중단됨. | ① 수동 입력(기본) ② 앱 열어둔 동안 가속도 센서(DeviceMotion)로 근사 카운트(실험 기능) ③ 건강앱 CSV/내보내기 파일 업로드 ④ 네이티브 전환 시 Capacitor 플러그인으로 교체 (§9). 서버 API는 `source` 필드(manual/sensor/import/healthkit/healthconnect)로 처음부터 설계. |
+| **걸음수 자동 수집 불가 (웹)** | 브라우저는 폰의 만보계(HealthKit/Health Connect)에 접근할 수 없다. Google Fit REST API는 2024년 이후 신규 사용이 중단됨. | **직접 측정은 범위 밖(Q4)**. ① **iPhone 단축어(Shortcuts) 자동화**: 매일 정해진 시각에 건강앱 걸음수를 읽어 서버 API로 POST (설치 1회, 이후 자동) ② 건강앱 내보내기 파일 업로드(Apple Health XML zip, 삼성헬스 CSV) ③ 수동 입력 ④ 네이티브 전환 시 Capacitor 플러그인으로 교체(§9). 서버 API는 `source` 필드로 처음부터 다중 소스 설계. |
 | **백그라운드 위치 추적 불가 (웹)** | 화면이 꺼지거나 탭이 백그라운드로 가면 `watchPosition`이 멈춘다. | "운동 세션 시작/종료" 모델로 설계. 사용자가 세션을 시작하면 화면 켜진 상태에서 추적(Wake Lock API로 화면 꺼짐 방지). 네이티브 전환 시 백그라운드 플러그인으로 교체. |
 | **HTTPS 필수** | 카메라, 위치, PWA 설치, Wake Lock, 푸시 알림은 모두 **보안 컨텍스트(HTTPS)**에서만 동작. `localhost`만 예외. | 개발은 localhost, 실제 폰 테스트는 NAS에 HTTPS 필요 → §8에서 3가지 방법 제시 (Tailscale / Cloudflare Tunnel / 자체 인증서+DDNS). **이 항목이 폰 실기기 테스트의 선행 조건**이다. |
 | **NAS/라즈베리파이 자원 제한** | ARM64 CPU, RAM 2~8GB. | 컨테이너 2개(app, db)로 최소화. DB는 프로토타입에서 SQLite 파일 → 확장 시 PostgreSQL로 교체 가능하게 ORM 사용. 이미지 리사이즈는 서버에서 처리 후 저장. |
@@ -49,13 +49,13 @@
 | 프론트엔드 | **React 18 + Vite + TypeScript + Tailwind CSS**, PWA(vite-plugin-pwa) | 가볍고 Capacitor로 그대로 네이티브 래핑 가능. 대안: Next.js(라즈베리파이엔 무거움), Vue. |
 | 상태/데이터 | TanStack Query + Zustand | 서버 상태 캐싱, 오프라인 큐 구현 용이 |
 | 차트 | Recharts | 체중·걸음·칼로리 추이 |
-| 지도 | Google Maps JavaScript API (`@vis.gl/react-google-maps`) | 요구사항. 대안: Leaflet+OSM(무료, 키 불필요) — API 키 발급이 부담이면 전환 가능 |
-| 백엔드 | **Node.js 20 + Fastify + TypeScript** | 경량·빠름. 대안: Python FastAPI(AI 생태계 친화적) — §10 논의 항목 |
-| ORM/DB | **Prisma + SQLite**(프로토) → PostgreSQL(확장) | 스키마 하나로 두 DB 지원. 5명 규모엔 SQLite로 충분 |
+| 지도 | Google Maps JavaScript API (`@vis.gl/react-google-maps`) | 확정. API 키는 사용자 제공(Q2) |
+| 백엔드 | **Node.js 22 + Fastify + TypeScript** | 확정(Q1) |
+| ORM/DB | **Drizzle ORM + better-sqlite3**(프로토) → PostgreSQL(확장) | 스키마 하나로 두 DB 지원, 라즈베리파이에서 가벼움. (v0.1의 Prisma는 7.x부터 드라이버 어댑터 필수·엔진 무거워 교체) |
 | 인증 | 이메일+비밀번호, Argon2 해시, JWT(access 15분 + refresh 30일, httpOnly 쿠키) | 5명 프로토라 소셜 로그인 제외. 확장 시 OAuth 추가 |
-| AI | **Google Gemini API** (`gemini-2.5-flash`, 이미지 입력 + JSON 스키마 응답) | 요구사항. 키는 서버에만 보관 |
+| AI | **Google Gemini API** (`gemini-2.5-pro`, 이미지 입력 + JSON 스키마 응답) | 확정(Q3). 키는 서버에만 보관. 모델명은 `.env`로 교체 가능 |
 | 파일 저장 | 로컬 볼륨 (`/data/uploads`), sharp로 리사이즈·EXIF 제거 | NAS 공유폴더를 볼륨으로 마운트 |
-| 배포 | Docker Compose (linux/arm64 + amd64 멀티아키), Caddy 리버스 프록시(자동 HTTPS) | Synology Container Manager / Portainer / 라즈베리파이 모두 동일 파일 사용 |
+| 배포 | Docker Compose (linux/arm64 + amd64 멀티아키), Caddy 리버스 프록시(자동 HTTPS) | **1차 서버는 라즈베리파이 4**, NAS는 백업 대상(§8.1 참조) |
 | 저장소 구조 | pnpm 모노레포: `apps/web`, `apps/api`, `packages/shared`(타입·zod 스키마) | 프론트/백 계약을 코드로 공유 |
 | 테스트 | Vitest(단위) + Playwright(모바일 뷰포트 E2E) | Playwright에서 iPhone/Pixel 에뮬레이션 |
 
@@ -67,7 +67,7 @@
 | # | 기능 | 상세 |
 |---|---|---|
 | F1 | **로그인/사용자** | 이메일·비밀번호 로그인, 세션 유지, 로그아웃, 비밀번호 변경. 시드 유저 5명. `role: user/admin` 필드로 확장 대비. |
-| F2 | **걸음수** | 일별 걸음수 기록(수동 입력, 센서 근사, 파일 가져오기). 일/주/월 차트, 목표 대비 달성률. |
+| F2 | **걸음수** | 일별 걸음수 기록. 입력 경로: ① iPhone 단축어 자동 전송(개인 API 토큰 사용) ② 건강앱 내보내기 파일 가져오기(Apple Health / 삼성헬스) ③ 수동 입력. 일/주/월 차트, 목표 대비 달성률. 같은 날 여러 소스가 있으면 우선순위(자동>가져오기>수동)로 대표값 선택. |
 | F3 | **운동 트래킹** | 운동 세션(걷기/달리기/자전거/기타) 시작→종료. 시간·거리·평균속도·소모칼로리(MET 공식). GPS 있으면 경로 저장. |
 | F4 | **이동 동선(지도)** | 세션 중 Geolocation `watchPosition`으로 좌표 수집(5~10초 간격, 정확도 필터링). Google Maps에 폴리라인으로 표시. 일자별 동선 보기. |
 | F5 | **식사 사진 → AI 칼로리** | 카메라 촬영/갤러리 선택 → 서버 업로드 → Gemini 분석 → 음식 항목 리스트(이름, 추정량, kcal, 탄/단/지) 반환 → 사용자 확인·수정 → 식사 기록 저장. 끼니(아침/점심/저녁/간식) 태깅. |
@@ -82,7 +82,7 @@
 | F10 | **수면 기록** | 취침/기상 시각 수동 입력, 수면 시간 추이. (센서 없음, 입력만) |
 | F11 | **주간/월간 리포트** | 평균 걸음, 칼로리 수지(섭취−소모), 체중 변화량, 운동 횟수 요약. |
 | F12 | **PWA + 오프라인** | 홈 화면 설치, 앱 아이콘, 오프라인 시 입력을 로컬 큐에 저장 후 재접속 시 동기화. NAS 접속이 끊겨도 기록 가능. |
-| F13 | **알림(선택)** | Web Push로 "오늘 체중 기록 안 함" 등 리마인더. iOS는 홈화면 설치 후에만 동작. |
+| F13 | ~~알림~~ | **미포함(Q9)**. 추후 Web Push 추가 가능하도록 `PushSubscription` 테이블만 예약. |
 | F14 | **데이터 내보내기/삭제** | 내 데이터 CSV/JSON 다운로드, 계정 데이터 전체 삭제. 개인 건강 정보라 기본 제공. |
 | F15 | **관리자(최소)** | admin이 유저 추가/비활성화. 5명 → N명 확장의 최소 도구. |
 
@@ -162,9 +162,18 @@ PushSubscription id, userId, endpoint, keys(json)
 
 ---
 
-## 8. 스마트폰 ↔ NAS 연결 가이드 (본 과제에서는 가이드만)
+## 8. 스마트폰 ↔ 서버 연결 가이드 (본 과제에서는 가이드만)
 
-폰의 카메라·위치·PWA는 **HTTPS가 아니면 동작하지 않는다.** 아래 셋 중 하나를 선택하면 된다. 프로토타입에는 **A안 권장**.
+### 8.1 서버 하드웨어 판단 (Q7)
+- **Synology DS112**(2012, Marvell Kirkwood ARMv5)와 **Realtek RTD1296 계열**(DS118/DS218/DS220j 등 저소음 모델)은 모두 Synology Container Manager(Docker)를 지원하지 않는다. 정확한 모델명을 확인해 주시면 재판단하겠지만, 두 후보 모두 앱 서버로는 부적합하다.
+- 따라서 **라즈베리파이 4가 앱 서버**(Docker Compose 전체 실행), **NAS는 백업 저장소**로 역할을 나눈다.
+  - RPi4 `/data`(DB + 사진)를 매일 새벽 NAS 공유폴더로 `rsync`(cron) → NAS 스냅샷/하이퍼백업으로 2차 보호.
+  - 또는 NAS 폴더를 NFS로 RPi4에 마운트해 사진(`/data/uploads`)만 NAS에 직접 저장. SQLite 파일은 NFS 위에 두면 잠금 문제가 있어 **반드시 RPi4 로컬 SSD/SD에** 둔다.
+- RPi4 권장 사양: 4GB 이상 RAM, 64bit Raspberry Pi OS, USB SSD 부팅(SD 카드 쓰기 수명 보호).
+
+### 8.2 HTTPS 연결 방식
+
+폰의 카메라·위치·PWA는 **HTTPS가 아니면 동작하지 않는다.** 아래 셋 중 **A안(Tailscale)으로 확정(Q6)**. 나머지는 참고용.
 
 | 안 | 방법 | 장점 | 단점 |
 |---|---|---|---|
@@ -198,22 +207,21 @@ PushSubscription id, userId, endpoint, keys(json)
 
 ---
 
-## 10. 논의가 필요한 결정 사항 (실행 전 확인)
+## 10. 결정 이력 (2026-09-25 논의 결과)
 
-| # | 질문 | 제 추천 | 영향 |
+| # | 질문 | 결정 | 비고 |
 |---|---|---|---|
-| Q1 | 백엔드 언어: **Node/TypeScript** vs Python/FastAPI | Node (프론트와 타입 공유, 컨테이너 1개 언어) | 전체 구조 |
-| Q2 | 지도: **Google Maps**(키 발급·결제계정 등록 필요, 월 $200 무료 크레딧) vs Leaflet+OpenStreetMap(무료·키 없음) | 요구사항대로 Google Maps, 단 키 발급이 부담이면 Leaflet 전환은 반나절 | 비용·설정 |
-| Q3 | Gemini 모델: **gemini-2.5-flash**(저렴·빠름) vs gemini-2.5-pro(정확·비쌈) | flash로 시작, 프롬프트/스키마로 정확도 보완 | AI 비용 |
-| Q4 | 걸음수 센서 근사(DeviceMotion) 실험 기능을 **포함**할지 | 포함하되 "실험" 라벨. 정확도 낮음을 명시 | 개발 1~2일 |
-| Q5 | DB: **SQLite**(프로토) vs 처음부터 PostgreSQL | SQLite. Prisma라 전환 비용 낮음 | 운영 단순성 |
-| Q6 | HTTPS 연결 방식 (§8 A/B/C) | A. Tailscale | 실기기 테스트 가능 시점 |
-| Q7 | 배포 대상 NAS 기종/라즈베리파이 모델 및 OS | 알려주시면 배포 문서를 맞춤 작성 | DEPLOY.md |
-| Q8 | 언어/UI: **한국어 단일** vs 다국어 준비 | 한국어 단일, 문자열은 상수 파일로 분리 | 소소 |
-| Q9 | Web Push 알림(F13)을 이번 범위에 넣을지 | 후순위(있으면 좋음), 마지막 단계에 시간 남으면 | 일정 |
-| Q10 | API 키(Gemini, Maps)는 누가 발급? | 사용자 측 발급 → `.env`에 입력. 저장소에는 절대 커밋하지 않음 | 보안 |
-
----
+| Q1 | 백엔드 언어 | **Node/TypeScript** | 추천안 |
+| Q2 | 지도 | **Google Maps**, API 키는 사용자 제공 | `.env`의 `GOOGLE_MAPS_API_KEY` |
+| Q3 | Gemini 모델 | **gemini-2.5-pro** | 정확도 우선. flash 대비 비용·지연 큼 → 결과 캐시·일일 한도 유지 |
+| Q4 | 걸음수 수집 | **직접 측정 제외**. 폰에서 간단히 내보내 연동 | iPhone 단축어 자동 전송 + 건강앱 파일 가져오기 + 수동 (§2, §4.1 F2, `docs/STEPS.md`) |
+| Q5 | DB | **SQLite** | ORM은 Drizzle로 변경(§3) |
+| Q6 | HTTPS 연결 | **Tailscale** | §8 A안 |
+| Q7 | 서버 하드웨어 | Synology(DS112 또는 Realtek 저소음 모델) + **라즈베리파이 4** | **NAS는 Docker 불가 가능성 높음 → RPi4를 앱 서버로, NAS는 백업 저장소**(§8.1) |
+| Q8 | 언어 | **한국어 단일** | 문자열은 `apps/web/src/i18n/ko.ts`에 모아 둠 |
+| Q9 | Web Push 알림 | **미포함** | 테이블만 예약 |
+| Q10 | API 키 발급 | **개인 계정** | 저장소에 키 커밋 금지, `.env.example`만 제공 |
+| 추가 | **디자인** | **Apple 디자인 철학(HIG) 전면 차용** | §15 |
 
 ## 11. 실행 단계 (마일스톤)
 
@@ -223,12 +231,11 @@ PushSubscription id, userId, endpoint, keys(json)
 |---|---|---|---|
 | **P0 기반** | 모노레포, Docker Compose, CI(lint/test), Prisma 스키마·시드 5명, Caddy | `docker compose up` 후 로그인 화면이 폰에서 뜸 | 1일 |
 | **P1 인증·프로필·대시보드** | F1, F7, F8 뼈대, 하단 탭 네비 | 5명 로그인, 목표 설정, 빈 대시보드 | 2일 |
-| **P2 신체·활동 기록** | F2(수동/가져오기), F6, F9, F10, 차트 | 걸음·체중·물·수면 입력과 추이 그래프 | 2일 |
+| **P2 신체·활동 기록** | F2(단축어 API/가져오기/수동), F6, F9, F10, 차트 | 걸음·체중·물·수면 입력과 추이 그래프 | 2일 |
 | **P3 식사 + AI** | F5, 카메라, Gemini 연동, 수정 UI | 사진 찍고 5초 내 칼로리 항목 확인·저장 | 3일 |
 | **P4 운동·지도** | F3, F4, Wake Lock, Google Maps 폴리라인 | 산책 세션 시작→종료 후 지도에 경로 표시 | 3일 |
-| **P5 PWA·리포트·내보내기** | F11, F12, F14, F15, (F13 선택) | 홈화면 설치, 오프라인 입력 동기화, CSV 내보내기 | 2일 |
+| **P5 PWA·리포트·내보내기** | F11, F12, F14, F15 | 홈화면 설치, 오프라인 입력 동기화, CSV 내보내기 | 2일 |
 | **P6 배포·문서** | `docs/DEPLOY.md`(§8), `docs/NATIVE.md`(§9), README, arm64 이미지 검증 | NAS/RPi에서 실제 실행, 폰 실기기 E2E 통과 | 1일 |
-| **P7 걸음 센서 실험(선택, Q4)** | DeviceMotion 근사 카운터 | "실험" 토글로 제공 | 1~2일 |
 
 합계 약 **14~16일**. P0→P1→P2는 순차, P3와 P4는 병행 가능.
 
@@ -268,5 +275,35 @@ claude04/
 ---
 
 ## 14. 다음 행동
-1. §10 항목에 대해 답변/의견 → 계획서 v0.2 확정.
-2. 확정 후 P0부터 착수. 단계마다 PR 단위로 커밋해 확인 가능하게 진행.
+1. ~~§10 항목 답변~~ → 반영 완료(v0.2).
+2. P0부터 착수. 단계마다 커밋해 확인 가능하게 진행.
+3. 사용자 확인 필요: NAS 정확한 모델명(§8.1), Google Maps·Gemini API 키 전달 시점(P3/P4 착수 전).
+
+---
+
+## 15. 디자인 원칙 — Apple Human Interface Guidelines 차용
+
+"디자인이 중요하다"는 요구에 따라, Apple HIG의 원칙과 iOS 네이티브 앱(건강, 피트니스)의 시각 언어를 웹에서 그대로 재현한다. 구체 규칙은 `docs/DESIGN.md`에 토큰 단위로 고정하고, 모든 컴포넌트는 그 토큰만 사용한다.
+
+### 15.1 세 가지 원칙
+| 원칙 | 의미 | 이 앱에서의 적용 |
+|---|---|---|
+| **Clarity(명료)** | 텍스트는 읽히고, 아이콘은 정확하고, 장식은 기능을 돕는다 | 숫자가 주인공. 큰 숫자 + 작은 단위 + 회색 보조 텍스트. 불필요한 테두리·그림자 제거 |
+| **Deference(절제)** | UI는 콘텐츠를 돋보이게 하고 뒤로 물러난다 | 배경은 시스템 그룹 배경(밝은 회색), 카드는 흰색 둥근 사각형, 색은 데이터에만 사용 |
+| **Depth(깊이)** | 계층과 전환으로 위치와 맥락을 알려준다 | 시트(bottom sheet)로 입력, 페이지 전환은 오른쪽에서 밀어 들어오는 push, 스크롤 시 큰 제목이 작은 제목으로 축소 |
+
+### 15.2 시각 토큰 (iOS 17 기준)
+- **타이포그래피**: `-apple-system, "SF Pro", "Pretendard", system-ui` 스택. iOS 텍스트 스타일 그대로: Large Title 34/700, Title1 28, Title2 22, Headline 17/600, Body 17, Callout 16, Subheadline 15, Footnote 13, Caption 12. 숫자는 `font-variant-numeric: tabular-nums`.
+- **색상(시맨틱)**: `systemBlue #007AFF`, `systemGreen #34C759`, `systemOrange #FF9500`, `systemRed #FF3B30`, `systemPurple #AF52DE`, `systemTeal #30B0C7`. 라벨 `label / secondaryLabel(60%) / tertiaryLabel(30%)`. 배경 `systemGroupedBackground #F2F2F7`, 카드 `#FFFFFF`. 다크모드는 각 토큰의 iOS 다크 값(`#000000`, 카드 `#1C1C1E`)으로 자동 전환.
+- **데이터 색상 규약**(건강앱 관례): 활동/걸음 = 오렌지, 운동 = 그린, 식사/영양 = 그린 계열이 아닌 **오렌지-레드**, 체중/신체 = 퍼플, 수분 = 틸/블루, 수면 = 인디고.
+- **형태**: 카드 모서리 반경 12~16px(연속 곡률 느낌으로 큰 반경), 그룹 인셋 리스트(좌우 16px 여백, 행 높이 44px, 구분선은 왼쪽 인셋), 버튼은 filled(파랑 배경·흰 글씨, 50px 높이, 반경 12px) / tinted / plain 세 등급.
+- **레이아웃**: 하단 탭바 5개(SF Symbols 스타일 아이콘 + 10px 라벨, 반투명 블러 배경), 상단 Large Title, 안전영역(`env(safe-area-inset-*)`) 존중, 터치 타겟 최소 44×44.
+- **모션**: 200~300ms, `cubic-bezier(0.32, 0.72, 0, 1)`(iOS 스프링 근사). 시트는 아래에서 올라옴, 링은 채워지는 애니메이션. `prefers-reduced-motion` 존중.
+- **시그니처 요소**: 홈의 **활동 링**(Apple Fitness 링 3개: 걸음·소모·섭취), 건강앱식 **요약 카드**(제목 + 큰 수치 + 미니 차트), 체중 차트는 건강앱과 같은 점+선+구간 강조.
+
+### 15.3 구현 방식
+- Tailwind 테마를 위 토큰으로 **완전히 덮어써서** 임의 색·크기 사용을 막는다(`tailwind.config`의 색상 팔레트를 iOS 시맨틱 컬러로 교체).
+- 공통 컴포넌트 세트 먼저 제작: `LargeTitleHeader`, `InsetGroup/Row`, `Card`, `Sheet`, `SegmentedControl`, `ActivityRing`, `StatTile`, `TabBar`, `FilledButton`. 모든 화면은 이 세트로만 조립.
+- 아이콘: SF Symbols는 라이선스상 웹에서 쓸 수 없으므로 시각적으로 가장 근접한 **Lucide** 아이콘을 1.5px 선 굵기로 사용.
+- 폰트: iOS에서는 시스템 SF Pro가 자동 적용. Android/데스크톱은 SF와 메트릭이 비슷한 **Pretendard**(한글 포함, 무료)를 셀프 호스팅.
+- 검수 기준: Playwright로 iPhone 15 뷰포트 스크린샷을 단계마다 남겨 iOS 건강앱과 나란히 비교.
