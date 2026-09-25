@@ -15,12 +15,20 @@ enum EnhanceStage: Int, CaseIterable {
     case finish
 }
 
+/// 3단계 인물 hook의 결과. 보정된 이미지와, 4단계 선명도가 피하도록 넘길 피부 마스크(0~1 그레이, 1 = 피부).
+struct PortraitResult {
+    var image: CIImage
+    /// nil이면 선명도를 이미지 전체에 적용한다(얼굴 없음·피부 보정 0).
+    var skinMask: CIImage?
+}
+
 /// 파이프라인이 이미지 외에 필요로 하는 외부 입력. 값 타입이며 파이프라인은 이를 읽기만 한다.
 struct PipelineContext {
     /// 이름 → LUT. 보통 `LUTLibrary.bundled`.
     var luts: [String: LUT] = [:]
-    /// 3단계 인물 보정 hook (R1-S5/S6에서 연결). nil이면 건너뜀.
-    var portraitStage: ((CIImage, PortraitParams) -> CIImage)? = nil
+    /// 3단계 인물 보정 hook (`PortraitStage.full`/`.live`). nil이면 건너뜀.
+    /// 결과의 `skinMask`는 4단계 선명도에 전달된다(PLAN §3.2: 선명도는 피부 마스크 바깥에만).
+    var portraitStage: ((CIImage, PortraitParams) -> PortraitResult)? = nil
     /// 5단계 저조도 hook (R1-S7 Zero-DCE++). nil이면 건너뜀. `params.lowLight > 0`일 때만 호출.
     var lowLightStage: ((CIImage) -> CIImage)? = nil
     /// 7단계 수평 보정 회전각(라디안, 반시계 방향 +). 이미지를 이 각도만큼 돌려 수평을 맞춘다.
@@ -48,10 +56,11 @@ enum EnhancePipeline {
         image = applyTone(params, to: image)
         context.onStage?(.tone, image)
 
-        image = applyPortrait(params, to: image, hook: context.portraitStage)
+        let portrait = applyPortrait(params, to: image, hook: context.portraitStage)
+        image = portrait.image
         context.onStage?(.portrait, image)
 
-        image = applySharpen(params, to: image, resolutionScale: scale)
+        image = applySharpen(params, to: image, resolutionScale: scale, skinMask: portrait.skinMask)
         context.onStage?(.sharpen, image)
 
         image = applyLowLight(params, to: image, hook: context.lowLightStage)
@@ -166,9 +175,10 @@ enum EnhancePipeline {
 
     // MARK: 3 인물 (hook)
 
-    /// 인물 보정 hook. hook이 없거나 `portrait.enabled == false`면 입력 그대로.
-    static func applyPortrait(_ params: PresetParams, to input: CIImage, hook: ((CIImage, PortraitParams) -> CIImage)?) -> CIImage {
-        guard let hook, params.portrait.enabled else { return input }
+    /// 인물 보정 hook. hook이 없거나 `portrait.enabled == false`면 입력 그대로(마스크 nil).
+    static func applyPortrait(_ params: PresetParams, to input: CIImage,
+                              hook: ((CIImage, PortraitParams) -> PortraitResult)?) -> PortraitResult {
+        guard let hook, params.portrait.enabled else { return PortraitResult(image: input, skinMask: nil) }
         return hook(input, params.portrait)
     }
 
@@ -176,14 +186,22 @@ enum EnhancePipeline {
 
     /// 언샤프 마스크(sharpness) + 로컬 대비(clarity; 큰 반경·낮은 강도의 언샤프 마스크로 근사).
     /// 로컬 대비를 먼저, 세부 선명도를 나중에 적용한다.
-    /// TODO(R1-S5): PLAN §3.2대로 피부 마스크 바깥에만 적용하도록 마스크 블렌드 추가.
-    static func applySharpen(_ params: PresetParams, to input: CIImage, resolutionScale: Double) -> CIImage {
+    /// `skinMask`가 있으면 PLAN §3.2대로 **피부 마스크 바깥에만** 적용한다(마스크 1 = 입력 유지, 0 = 선명 결과).
+    static func applySharpen(_ params: PresetParams, to input: CIImage, resolutionScale: Double,
+                             skinMask: CIImage? = nil) -> CIImage {
         var image = input
         let clarity = Mapping.clarity(params.clarity, resolutionScale: resolutionScale)
         image = unsharp(image, radius: clarity.radius, intensity: clarity.intensity)
         let sharp = Mapping.sharpness(params.sharpness, resolutionScale: resolutionScale)
         image = unsharp(image, radius: sharp.radius, intensity: sharp.intensity)
-        return image
+        guard let skinMask, image !== input, !input.extent.isInfinite else { return image }
+        // 마스크가 이미지보다 작아도 바깥은 0(선명 결과)이 되도록 검정 배경 위에 둔다.
+        let black = CIImage(color: CIColor(red: 0, green: 0, blue: 0)).cropped(to: input.extent)
+        let f = CIFilter.blendWithMask()
+        f.inputImage = input
+        f.backgroundImage = image
+        f.maskImage = skinMask.composited(over: black).cropped(to: input.extent)
+        return f.outputImage?.cropped(to: input.extent) ?? image
     }
 
     private static func unsharp(_ input: CIImage, radius: Double, intensity: Double) -> CIImage {

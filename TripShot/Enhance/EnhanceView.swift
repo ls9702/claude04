@@ -244,15 +244,20 @@ private struct EnhanceScreen: View {
                 }
                 .font(.subheadline.weight(.semibold))
 
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 8) {
+                    // 인물 모드 스위치(앱 상태, 촬영 화면과 공유). 켜져 있을 때만 피부·치아 슬라이더를 보인다.
                     Toggle(isOn: $services.portraitModeEnabled) {
                         Label("인물 모드", systemImage: "person.crop.circle")
                     }
-                    // R1-S5(피부 보정) 전까지 비활성. 스위치 상태는 AppServices가 기억한다.
-                    .disabled(true)
-                    Text("인물 보정은 곧 추가됩니다")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                    if services.portraitModeEnabled {
+                        if vm.currentParams.portrait.enabled {
+                            AdjustmentSliders(params: currentParamsBinding, kinds: AdjustmentKind.portrait)
+                        } else {
+                            Text("원본에서는 인물 보정을 적용하지 않습니다")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                 }
             }
             .padding(16)

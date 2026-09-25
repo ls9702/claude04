@@ -107,16 +107,25 @@ struct CaptureView: View {
 
     private var topBar: some View {
         HStack(alignment: .center) {
-            // 인물 모드 스위치(앱 상태, 마지막 상태 기억). 실제 인물 보정은 R1-S5에서 연결.
-            VStack(alignment: .leading, spacing: 2) {
+            // 인물 모드 스위치(앱 상태, 마지막 상태 기억). 켜져 있고 얼굴이 잡히면 작은 얼굴 표시(PLAN §3.3).
+            HStack(spacing: 6) {
                 Toggle(isOn: $services.portraitModeEnabled) {
                     Label("인물", systemImage: "person.crop.circle")
                 }
                 .toggleStyle(.button)
-                .disabled(true)
-                Text("인물 보정 준비 중")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                if services.portraitModeEnabled && vm.detectedFaceCount > 0 {
+                    HStack(spacing: 2) {
+                        Image(systemName: "face.smiling")
+                        if vm.detectedFaceCount > 1 {
+                            Text("\(vm.detectedFaceCount)")
+                                .font(.caption2.monospacedDigit())
+                        }
+                    }
+                    .font(.footnote)
+                    .foregroundStyle(.yellow)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("인물 보정 중, 얼굴 \(vm.detectedFaceCount)명")
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 

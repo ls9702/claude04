@@ -17,6 +17,10 @@ final class AppServices: ObservableObject {
     let renderer: EnhanceRenderer
     let photoSaver: PhotoSaver
     let locationProvider = LocationProvider()
+    /// 저장·앨범 경로의 얼굴 검출기(상태 없음, 스레드 안전).
+    let faceDetector = FaceDetector()
+    /// 인물 보정 Metal 커널. 처음 쓸 때 한 번 로드한다. 로드 실패면 nil(피부색 마스크·주파수 분리 없이 폴백).
+    private(set) lazy var portraitKernels: PortraitKernels? = PortraitKernels.load()
 
     /// 인물 모드 스위치. 마지막 상태를 기억한다(PLAN §3.3). 기본 꺼짐.
     @Published var portraitModeEnabled: Bool {
@@ -41,9 +45,22 @@ final class AppServices: ObservableObject {
 
     /// 렌더마다 넘길 파이프라인 컨텍스트. 렌더러의 공유 컨텍스트(LUT 등)를 복사하고
     /// 인물 단계 hook만 스위치 상태에 맞춰 바꾼다. 공유 컨텍스트 자체는 바꾸지 않는다.
-    func pipelineContext() -> PipelineContext {
+    /// - Parameters:
+    ///   - quality: `.full`(저장·앨범·촬영 후처리) = 매번 검출 + 주파수 분리.
+    ///     `.live`(라이브 프리뷰) = `liveTracker`의 평활 검출 + 경량 블러. `.live`인데 트래커가 없으면 `.full`.
+    ///   - liveTracker: 라이브 경로의 트래커(CaptureViewModel 소유, 비디오 큐 전용).
+    func pipelineContext(quality: PortraitQuality = .full, liveTracker: SmoothedFaceTracker? = nil) -> PipelineContext {
         var context = renderer.pipelineContext
-        context.portraitStage = portraitModeEnabled ? PortraitStage.placeholder : nil
+        guard portraitModeEnabled else {
+            context.portraitStage = nil
+            return context
+        }
+        let kernels = portraitKernels
+        if quality == .live, let tracker = liveTracker {
+            context.portraitStage = PortraitStage.live(tracker: tracker, kernels: kernels)
+        } else {
+            context.portraitStage = PortraitStage.full(detector: faceDetector, kernels: kernels)
+        }
         return context
     }
 }

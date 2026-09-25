@@ -170,6 +170,7 @@ final class EnhanceViewModelTests: XCTestCase {
         XCTAssertFalse(p.auto)
         XCTAssertFalse(p.autoHorizon)
         XCTAssertNil(p.lutName)
+        XCTAssertFalse(p.portrait.enabled)
         for value in [p.exposure, p.contrast, p.highlights, p.shadows, p.temperature, p.vibrance,
                       p.sharpness, p.clarity, p.lowLight, p.vignette] {
             XCTAssertEqual(value, 0)

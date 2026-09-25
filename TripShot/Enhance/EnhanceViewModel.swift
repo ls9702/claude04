@@ -101,6 +101,8 @@ protocol PhotoSaving: AnyObject {
     func saveNonDestructive(asset: PHAsset, params: PresetParams, horizonAngle: Double?) async throws
     func saveAsCopy(asset: PHAsset, params: PresetParams, horizonAngle: Double?) async throws -> String
     func save(item: PhotoItem, mode: SaveMode, params: PresetParams) async throws
+    /// 파이프라인 컨텍스트(인물 모드 hook 포함)를 지정하는 저장. 프리뷰와 같은 컨텍스트로 저장해 "보이는 대로 저장"을 지킨다.
+    func save(item: PhotoItem, mode: SaveMode, params: PresetParams, context: PipelineContext?) async throws
 }
 
 extension PhotoSaving {
@@ -113,9 +115,25 @@ extension PhotoSaving {
             _ = try await saveAsCopy(asset: asset, params: params, horizonAngle: nil)
         }
     }
+
+    /// 기본 구현: 컨텍스트를 받지 못하는 저장기(테스트 대역 등)는 컨텍스트 없이 저장한다.
+    func save(item: PhotoItem, mode: SaveMode, params: PresetParams, context: PipelineContext?) async throws {
+        try await save(item: item, mode: mode, params: params)
+    }
 }
 
-extension PhotoSaver: PhotoSaving {}
+extension PhotoSaver: PhotoSaving {
+    /// PhotoSaver는 컨텍스트를 렌더에 그대로 넘긴다(nil이면 렌더러 공유 컨텍스트).
+    func save(item: PhotoItem, mode: SaveMode, params: PresetParams, context: PipelineContext?) async throws {
+        guard let asset = item.asset else { throw EnhanceSaveError.assetUnavailable }
+        switch mode {
+        case .nonDestructive:
+            try await saveNonDestructive(asset: asset, params: params, horizonAngle: nil, context: context)
+        case .copy:
+            _ = try await saveAsCopy(asset: asset, params: params, horizonAngle: nil, context: context)
+        }
+    }
+}
 
 extension PresetParams {
     /// "원본" 항목: 모든 단계가 무적용(파이프라인 출력 = 입력).
@@ -134,6 +152,8 @@ extension PresetParams {
         p.lutName = nil
         p.vignette = 0
         p.autoHorizon = false
+        // "원본"은 인물 모드 스위치가 켜져 있어도 인물 보정을 하지 않는다(촬영 후처리도 identity면 건너뛴다).
+        p.portrait.enabled = false
         return p
     }
 }
@@ -503,11 +523,11 @@ final class EnhanceViewModel: ObservableObject {
             }
             progress?.currentName = item.displayName
             let params = self.params(for: item.localID)
-            // TODO(R1-S5): 저장 렌더는 PhotoSaver가 렌더러의 공유 컨텍스트(portraitStage = nil)를 쓴다.
-            //              인물 보정이 실제로 생기면 `services.pipelineContext()`를 저장 경로에도 넘기도록 PhotoSaver를 확장.
-            //              (지금은 자리 표시자 hook이 입력을 그대로 돌려주므로 프리뷰와 저장 결과가 같다.)
+            // 프리뷰와 같은 컨텍스트(인물 모드 스위치 반영, `.full` 품질)로 저장한다. 장마다 새로 받아
+            // 저장 도중 스위치를 바꾸면 다음 장부터 반영된다.
+            let context = contextProvider()
             let job = Task.detached(priority: .userInitiated) {
-                try await saver.save(item: item, mode: mode, params: params)
+                try await saver.save(item: item, mode: mode, params: params, context: context)
             }
             do {
                 try await job.value

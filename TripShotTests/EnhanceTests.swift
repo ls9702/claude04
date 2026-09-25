@@ -210,7 +210,7 @@ final class EnhanceTests: XCTestCase {
         let stages: [(String, CIImage)] = [
             ("auto", EnhancePipeline.applyAuto(p, to: input)),
             ("tone", EnhancePipeline.applyTone(p, to: input)),
-            ("portrait", EnhancePipeline.applyPortrait(p, to: input, hook: nil)),
+            ("portrait", EnhancePipeline.applyPortrait(p, to: input, hook: nil).image),
             ("sharpen", EnhancePipeline.applySharpen(p, to: input, resolutionScale: 1)),
             ("lowLight", EnhancePipeline.applyLowLight(p, to: input, hook: { _ in CIImage(color: .black) })),
             ("lut", EnhancePipeline.applyLUT(p, to: input, luts: [:], colorSpace: Self.sRGB)),
@@ -281,7 +281,7 @@ final class EnhanceTests: XCTestCase {
             portraitInput = image
             XCTAssertEqual(portrait, expectedPortrait)
             // 이후 단계에서 식별되도록 extent를 줄여 돌려준다
-            return image.cropped(to: CGRect(x: 0, y: 0, width: 2, height: 2))
+            return PortraitResult(image: image.cropped(to: CGRect(x: 0, y: 0, width: 2, height: 2)), skinMask: nil)
         }
         context.lowLightStage = { image in
             log.append("lowLight-hook")
@@ -317,9 +317,13 @@ final class EnhanceTests: XCTestCase {
         var called = false
         var p = neutralParams()
         p.portrait.enabled = false
-        let out = EnhancePipeline.applyPortrait(p, to: solid(0.1, 0.1, 0.1), hook: { img, _ in called = true; return img })
+        let out = EnhancePipeline.applyPortrait(p, to: solid(0.1, 0.1, 0.1), hook: { img, _ in
+            called = true
+            return PortraitResult(image: img, skinMask: nil)
+        })
         XCTAssertFalse(called)
-        XCTAssertEqual(out.extent, CGRect(x: 0, y: 0, width: 4, height: 4))
+        XCTAssertEqual(out.image.extent, CGRect(x: 0, y: 0, width: 4, height: 4))
+        XCTAssertNil(out.skinMask)
     }
 
     // MARK: 렌더러

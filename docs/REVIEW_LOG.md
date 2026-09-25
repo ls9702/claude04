@@ -4,6 +4,32 @@
 
 ---
 
+## R1-S5 인물 모드 ① 피부 · 2026-09-26 · 서브에이전트(Opus 5.5) 작성분 · 결과: **통과 (수정 없음)**
+
+### 필수 항목
+- 사진 보관함·메타데이터: 저장 경로 변경 없음(§3.4 미접촉). 앨범 저장이 `PhotoSaver`의 `context:` 경로로 프리뷰와 같은 컨텍스트를 넘기도록 연결(R1-S3 권고 반영). 충족.
+- 원본 손상 경로: 없음(순수 함수).
+- 외부 패키지: 없음. `project.yml`은 사전 허용한 Metal 컴파일 플래그 2줄만 변경(`MTL_COMPILER_FLAGS=-fcikernel`, `MTLLINKER_FLAGS=-cikernel`).
+- 큐 분리: `SmoothedFaceTracker`는 비디오 큐 전용 상태 + 잠금 보호 `faceCount`. `FaceDetector`는 무상태. 충족.
+- 권한: 해당 없음.
+- 설계 일치(§3.2·§3.3): 3단계 위치, 선명도는 피부 마스크 바깥에만(`applySharpen(skinMask:)`), 얼굴 없으면 무동작, 다인 최대 5명, 눈·입 안쪽 제외, 라이브 경량 경로. 충족. 주파수 분리를 "밴드 제거(low + input − mid)"로 바꾼 것은 지시안(선형 블러라 질감까지 잃음)보다 타당.
+
+### 잘한 점
+- 마스크를 얼굴 주변 영역만 원본 해상도로 그리고 블러도 그 영역에서만 계산(풀해상도 비용 억제).
+- 검출은 1024(저장)/640(라이브) 다운샘플로 하고 좌표를 원본 스케일로 환산.
+- "원본" 프리셋에서 인물 보정을 끔 → 라이브 프리뷰와 촬영 후처리(identity 건너뜀) 일치.
+
+### 권고 (실기기·다음 단계)
+- (B4 실기기) 라이브 검출이 비디오 큐에서 동기로 돌아(3프레임마다) Vision 지연(A14에서 수십 ms)만큼 프레임이 버려진다. fps가 부족하면 검출을 별도 큐에서 비동기로 돌리고 마지막 결과를 쓰는 구조로 바꿀 것.
+- (B4 실기기) 앨범 프리뷰는 렌더마다 검출한다(슬라이더 조작 시 80ms 디바운스마다). 지연이 느껴지면 사진별 검출 결과 캐시.
+- (B4 실기기) `Cr ≤ 173` 상한으로 붉은 잡티가 마스크에서 빠질 수 있음. 12% 최소 얼굴 너비도 단체 사진에서 확인.
+- (R1-S6) `PortraitStage.isActive`에 `faceSlim`·`eyeEnlarge` 추가. 워프는 피부 보정 **전에**(랜드마크 좌표가 원본 기준이므로 워프 후 마스크는 워프된 좌표로 다시 그리거나, 워프를 마지막에 적용하고 마스크도 같은 워프를 통과시킴) 순서를 정할 것.
+
+### 컴파일 확신이 낮은 지점 (Mac 빌드 시 우선 확인)
+- Metal: `-fcikernel` 빌드에서 커널 네임스페이스 밖 `inline` 헬퍼 허용 여부, `default.metallib` 생성. `testSkinLikelihoodKernel` 실패 시 여기부터.
+- `CGContext` 8비트 `linearGray` + alpha none 생성 여부(실패 시 `CGColorSpaceCreateDeviceGray()`).
+- `VNImageRequestHandler(ciImage:orientation:options: [.ciContext: ...])`, `CIColorKernel(functionName:fromMetalLibraryData:)`, `CIFilter.multiplyCompositing()`, SF Symbol `mouth`.
+
 ## R1-S4 라이브 보정 프리뷰 · 2026-09-26 · 서브에이전트(Opus 5.5) 작성분 · 결과: **통과 (수정 1건)**
 
 ### 필수 항목

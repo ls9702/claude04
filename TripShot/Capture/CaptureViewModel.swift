@@ -26,6 +26,8 @@ final class CaptureViewModel: ObservableObject {
     let camera = CameraService()
     let pipeline = LivePipeline()
     let preview = MetalPreviewView.Coordinator()
+    /// 라이브 인물 보정용 얼굴 추적(비디오 큐 전용 상태 + 잠금 보호 얼굴 수). 3프레임마다 검출.
+    let faceTracker = SmoothedFaceTracker()
 
     // MARK: 화면 상태
 
@@ -43,6 +45,8 @@ final class CaptureViewModel: ObservableObject {
     @Published var errorMessage: String?
     /// 측정용 초당 프리뷰 프레임 수·버린 프레임 수(DEBUG 빌드 표시).
     @Published private(set) var stats: String = ""
+    /// 라이브 프리뷰에서 인물 보정 중인 얼굴 수(0이면 표시 없음). 1초마다 트래커에서 읽는다.
+    @Published private(set) var detectedFaceCount = 0
 
     // MARK: 내부 상태
 
@@ -153,6 +157,7 @@ final class CaptureViewModel: ObservableObject {
         camera.stop()
         statsTask?.cancel()
         statsTask = nil
+        detectedFaceCount = 0
     }
 
     // MARK: 프리셋·인물 모드·열 상태
@@ -181,6 +186,10 @@ final class CaptureViewModel: ObservableObject {
 
     /// 인물 모드 스위치 변경 등으로 파이프라인 컨텍스트가 바뀌었을 때.
     func refreshContext() {
+        if services?.portraitModeEnabled != true {
+            faceTracker.reset()
+            detectedFaceCount = 0
+        }
         pushSettings()
     }
 
@@ -197,10 +206,11 @@ final class CaptureViewModel: ObservableObject {
     }
 
     /// 현재 params·컨텍스트·해상도를 라이브 파이프라인에 한 번에 넘긴다.
+    /// 라이브는 인물 보정 경량 경로(`.live`: 평활 트래커 + 가우시안), 셔터 후처리는 `.full`(capture()의 스냅샷).
     private func pushSettings() {
         guard let services else { return }
         pipeline.update(LiveSettings(params: params,
-                                     context: services.pipelineContext(),
+                                     context: services.pipelineContext(quality: .live, liveTracker: faceTracker),
                                      maxDimension: previewMaxDimension))
     }
 
@@ -322,7 +332,7 @@ final class CaptureViewModel: ObservableObject {
 
     // MARK: 측정
 
-    /// 1초마다 그린 프레임·버린 프레임 수를 갱신한다(실기기 30fps 확인용).
+    /// 1초마다 그린 프레임·버린 프레임 수를 갱신한다(실기기 30fps 확인용). 인물 보정 얼굴 수도 여기서 읽는다.
     private func startStats() {
         statsTask?.cancel()
         statsTask = Task { [weak self] in
@@ -331,6 +341,8 @@ final class CaptureViewModel: ObservableObject {
                 guard let self, !Task.isCancelled else { return }
                 let s = self.preview.takeStats()
                 let cameraDropped = self.camera.takeDroppedFrameCount()
+                let faces = self.faceTracker.faceCount
+                if faces != self.detectedFaceCount { self.detectedFaceCount = faces }
                 self.stats = "\(s.rendered)fps · 버림 \(s.dropped)+\(cameraDropped) · \(Int(self.previewMaxDimension))px"
             }
         }
