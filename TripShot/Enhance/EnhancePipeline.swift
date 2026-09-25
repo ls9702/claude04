@@ -74,8 +74,19 @@ enum EnhancePipeline {
     /// TODO(검증): 풀해상도 분석 비용이 크면 프리뷰에서 얻은 필터 값을 저장 시 재사용하도록 R1-S3에서 조정.
     static func applyAuto(_ params: PresetParams, to input: CIImage) -> CIImage {
         guard params.auto else { return input }
+        return applyAutoFilters(autoFilters(for: input), to: input)
+    }
+
+    /// 1단계의 "분석" 부분: 이미지 내용을 보고 자동 개선 필터 목록을 만든다(CPU 비용이 있음).
+    /// 라이브 프리뷰(R1-S4 `LivePipeline`)는 이 결과를 몇 프레임 동안 재사용한다.
+    static func autoFilters(for input: CIImage) -> [CIFilter] {
         // crop·level은 명시적으로 꺼서 자동 크롭·기울기 보정 필터가 섞이지 않게 한다(수평은 7단계 담당).
-        let filters = input.autoAdjustmentFilters(options: [.redEye: false, .enhance: true, .crop: false, .level: false])
+        input.autoAdjustmentFilters(options: [.redEye: false, .enhance: true, .crop: false, .level: false])
+    }
+
+    /// 1단계의 "적용" 부분: `autoFilters(for:)`가 만든 필터를 순서대로 적용하고 입력 영역으로 자른다.
+    /// 필터 객체의 inputImage를 바꾸므로 같은 필터 목록을 여러 스레드에서 동시에 쓰지 않는다.
+    static func applyAutoFilters(_ filters: [CIFilter], to input: CIImage) -> CIImage {
         guard !filters.isEmpty else { return input }
         var image = input
         for filter in filters {

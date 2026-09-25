@@ -71,7 +71,16 @@ final class PhotoSaver {
     /// 성공 후에도 원본은 사진 앱이 보관하므로 "원본으로 되돌리기"가 가능하다.
     ///
     /// 무거운 렌더가 호출 스레드(협력 스레드 풀)에서 돌므로 메인 액터에서 부르지 말고 `Task`로 부른다.
+    /// (`PhotoSaving` 요구 사항. 렌더러 공유 컨텍스트를 쓴다.)
     func saveNonDestructive(asset: PHAsset, params: PresetParams, horizonAngle: Double?) async throws {
+        try await saveNonDestructive(asset: asset, params: params, horizonAngle: horizonAngle, context: nil)
+    }
+
+    /// `context`를 지정하는 비파괴 편집. 라이브 촬영 후처리(R1-S4)는 프리뷰에 쓴 것과 같은 컨텍스트
+    /// (`AppServices.pipelineContext()` — 인물 모드 스위치 반영)를 넘겨 "보이는 대로 저장"을 보장한다.
+    /// - Parameter context: nil이면 렌더러 공유 컨텍스트. 어느 쪽이든 `horizonAngle`은 이 인자 값으로 덮어쓴다.
+    func saveNonDestructive(asset: PHAsset, params: PresetParams, horizonAngle: Double?,
+                            context: PipelineContext?) async throws {
         guard await Permissions.requestPhotoLibrary() else { throw PhotoSaveError.notAuthorized }
 
         let input = try await contentEditingInput(for: asset)
@@ -81,7 +90,8 @@ final class PhotoSaver {
         let wanted = ImageEncoder.format(ofUTI: input.uniformTypeIdentifier ?? "")
         let (outputURL, format) = try renderedContentDestination(for: output, wanted: wanted)
 
-        let rendered = try renderAndEncode(input: input, params: params, horizonAngle: horizonAngle, format: format)
+        let rendered = try renderAndEncode(input: input, params: params, horizonAngle: horizonAngle,
+                                           context: context, format: format)
 
         do {
             try rendered.data.write(to: outputURL, options: .atomic)
@@ -122,11 +132,18 @@ final class PhotoSaver {
     ///
     /// 원본 손상 경로 없음: 원본은 읽기만 하고, 보관함 변경은 새 에셋 생성 하나뿐이다.
     func saveAsCopy(asset: PHAsset, params: PresetParams, horizonAngle: Double?) async throws -> String {
+        try await saveAsCopy(asset: asset, params: params, horizonAngle: horizonAngle, context: nil)
+    }
+
+    /// `context`를 지정하는 사본 저장. nil이면 렌더러 공유 컨텍스트.
+    func saveAsCopy(asset: PHAsset, params: PresetParams, horizonAngle: Double?,
+                    context: PipelineContext?) async throws -> String {
         guard await Permissions.requestPhotoLibrary() else { throw PhotoSaveError.notAuthorized }
 
         let input = try await contentEditingInput(for: asset)
         let format = ImageEncoder.format(ofUTI: input.uniformTypeIdentifier ?? "")
-        let rendered = try renderAndEncode(input: input, params: params, horizonAngle: horizonAngle, format: format)
+        let rendered = try renderAndEncode(input: input, params: params, horizonAngle: horizonAngle,
+                                           context: context, format: format)
 
         let creationDate = asset.creationDate ?? ImageMetadata.creationDate(from: rendered.sourceProperties)
         let location = asset.location ?? (rendered.sourceProperties[kCGImagePropertyGPSDictionary] as? [CFString: Any])
@@ -193,6 +210,7 @@ final class PhotoSaver {
     private func renderAndEncode(input: PHContentEditingInput,
                                  params: PresetParams,
                                  horizonAngle: Double?,
+                                 context: PipelineContext?,
                                  format: ImageEncoder.Format) throws -> RenderedPhoto {
         guard let url = input.fullSizeImageURL else { throw PhotoSaveError.inputUnavailable(nil) }
         let sourceData: Data
@@ -215,7 +233,11 @@ final class PhotoSaver {
             params: params,
             outputColorSpace: EnhanceRenderer.colorSpace(of: upright),
             pixelFormat: pixelFormat,
-            adjustContext: { $0.horizonAngle = horizonAngle }
+            adjustContext: { ctx in
+                // 호출 측 컨텍스트(인물 모드 등)가 있으면 공유 컨텍스트 대신 쓰고, 수평 각도는 사진별 값으로 덮어쓴다.
+                if let context { ctx = context }
+                ctx.horizonAngle = horizonAngle
+            }
         ) else {
             throw PhotoSaveError.renderFailed
         }

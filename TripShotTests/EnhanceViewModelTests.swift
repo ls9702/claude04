@@ -24,8 +24,7 @@ private final class FakeSaver: PhotoSaving, @unchecked Sendable {
     private let lock = NSLock()
     private var _calls: [Call] = []
     var calls: [Call] {
-        lock.lock(); defer { lock.unlock() }
-        return _calls
+        lock.withLock { _calls }
     }
 
     init(failingIDs: Set<String> = []) {
@@ -43,9 +42,8 @@ private final class FakeSaver: PhotoSaving, @unchecked Sendable {
 
     func save(item: PhotoItem, mode: SaveMode, params: PresetParams) async throws {
         if let onSave { await onSave(item.localID) }
-        lock.lock()
-        _calls.append(Call(localID: item.localID, mode: mode, params: params))
-        lock.unlock()
+        // async 컨텍스트에서는 lock()/unlock() 직접 호출 대신 withLock(동기 클로저)을 쓴다(Swift 6 경고 제거).
+        lock.withLock { _calls.append(Call(localID: item.localID, mode: mode, params: params)) }
         if failingIDs.contains(item.localID) { throw FakeError.failed }
     }
 }

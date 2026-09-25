@@ -4,6 +4,33 @@
 
 ---
 
+## R1-S4 라이브 보정 프리뷰 · 2026-09-26 · 서브에이전트(Opus 5.5) 작성분 · 결과: **통과 (수정 1건)**
+
+### 필수 항목
+- 사진 보관함·메타데이터: 촬영 원본은 재인코딩 없이 저장, 보정본은 `PhotoSaver.saveNonDestructive(context:)`로 같은 에셋 비파괴. 충족.
+- 원본 손상 경로: 없음(후처리 실패 시 원본은 이미 저장됨, 메시지에 명시).
+- 외부 패키지: 없음. project.yml 변경 없음.
+- **큐 분리**: 세션 큐(구성·촬영·줌·포커스), 비디오 큐(프레임 → LivePipeline → Coordinator.submit), 메인(`@Published`·MTKView draw). 프레임 콜백은 `nonisolated static`으로 만들어 메인 액터를 캡처하지 않음. 잠금 보호 상태(handlerLock, LiveSettings, Coordinator lock) 분리 적절. 충족.
+- **백프레셔**: 1차 `alwaysDiscardsLateVideoFrames`, 2차 `LockedFrameGate(limit 1)`로 "프레임 도착 ~ GPU 완료" 구간에 1장만. GPU 완료 핸들러에서 해제, draw 미호출·비활성·뷰 분리 경로에서도 해제. 충족.
+- 회전·미러: `videoRotationAngle = 90`(세로), 미지원 시 `.oriented(.right)` 폴백, 미러 명시적 off. 사진은 `RotationCoordinator`로 기기 방향 반영. 충족.
+- 권한 거부: 기존 화면 유지. 충족.
+- 설계 일치: 프리뷰·후처리가 같은 params·context로 `EnhancePipeline.apply` 호출("보이는 대로 저장"). 셔터 순간 설정을 tag로 보관해 연속 촬영 중 프리셋 변경에도 정확. 자동 보정 분석을 15프레임마다 재사용하는 것은 성능상 타당(적용 코드는 저장과 동일). 충족.
+
+### 직접 수정한 것
+- `MetalPreviewView.Coordinator.render(in:)`: `CIContext.render(_:to:commandBuffer:bounds:colorSpace:)`는 Core Image 좌하단 원점이 Metal 텍스처 좌상단에 매핑되어 **위아래가 뒤집혀 보이는 알려진 동작**. `CIRenderDestination(mtlTexture:commandBuffer:)` + `isFlipped = true` + `startTask(toRender:to:)`로 교체. 실기기에서 반대로 보이면 `isFlipped`만 뒤집으면 됨.
+
+### 권고 (다음 단계·실기기)
+- (B3 실기기) DEBUG 상단 통계로 프리셋별 fps 확인. 30fps 미달이면 `PreviewQuality.baseDimension`을 768로 낮추는 것이 첫 조치, 다음은 `autoRefreshInterval` 증가.
+- (B3 실기기) `.photo` 프리셋의 프레임 크기 로그 확인. 4032×3024로 오면 `EnhanceRenderer.downsample`(Lanczos) 비용이 큼 → `session.sessionPreset`을 `.hd1920x1080` 또는 `activeFormat` 선택으로 바꾸고 촬영 화질은 `AVCapturePhotoOutput`이 별도로 보장하는지 확인.
+- (B3 실기기) 프리뷰 색: sRGB 출력. 채도가 사진 앱 원본과 다르면 CAMetalLayer colorspace를 P3로.
+- (R1-S5) 인물 모드 hook이 실제 필터로 바뀌면 라이브 경량 경로(양방향 필터)는 `LiveSettings.context.portraitStage`에 별도 클로저를 넣는 방식으로 분기.
+
+### 컴파일 확신이 낮은 지점 (Mac 빌드 시 우선 확인)
+- `AVCaptureDevice.RotationCoordinator(device:previewLayer: nil)`, `videoRotationAngleForHorizonLevelCapture`.
+- `MainActor.assumeIsolated`, `MTKViewDelegate`의 액터 격리 표시 여부(별도 `ViewDelegate`로 우회).
+- `CIRenderDestination` API(리뷰에서 교체한 부분), `MTKView.draw()` 수동 호출 시 `draw(in:)` 동기 호출 여부.
+- `MagnifyGesture`(iOS 17+).
+
 ## R1-S3 앨범 보정 화면 · 2026-09-25 · 서브에이전트(Opus 5.5) 작성분 · 결과: **통과 (수정 1건, 문구)**
 
 ### 필수 항목
