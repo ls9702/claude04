@@ -212,7 +212,7 @@ final class EnhanceTests: XCTestCase {
             ("tone", EnhancePipeline.applyTone(p, to: input)),
             ("portrait", EnhancePipeline.applyPortrait(p, to: input, hook: nil).image),
             ("sharpen", EnhancePipeline.applySharpen(p, to: input, resolutionScale: 1)),
-            ("lowLight", EnhancePipeline.applyLowLight(p, to: input, hook: { _ in CIImage(color: .black) })),
+            ("lowLight", EnhancePipeline.applyLowLight(p, to: input, hook: { _, _ in CIImage(color: .black) })),
             ("lut", EnhancePipeline.applyLUT(p, to: input, luts: [:], colorSpace: Self.sRGB)),
             ("finish", EnhancePipeline.applyFinish(p, to: input, horizonAngle: 0.2)),
         ]
@@ -268,10 +268,11 @@ final class EnhanceTests: XCTestCase {
         var log: [String] = []
         var portraitInput: CIImage?
         var lowLightExtent: CGRect?
+        var lowLightStrength: Double?
 
         var p = neutralParams()
         p.exposure = 50            // 톤 단계가 실제로 무언가 하게
-        p.lowLight = 50            // 저조도 hook 활성
+        p.lowLight = 70            // 저조도 hook 활성(야경 프리셋 값) → 강도 0.7
         p.portrait.enabled = true
         let expectedPortrait = p.portrait
 
@@ -283,9 +284,10 @@ final class EnhanceTests: XCTestCase {
             // 이후 단계에서 식별되도록 extent를 줄여 돌려준다
             return PortraitResult(image: image.cropped(to: CGRect(x: 0, y: 0, width: 2, height: 2)), skinMask: nil)
         }
-        context.lowLightStage = { image in
+        context.lowLightStage = { image, strength in
             log.append("lowLight-hook")
             lowLightExtent = image.extent
+            lowLightStrength = strength
             return image
         }
         context.onStage = { stage, _ in log.append("\(stage)") }
@@ -310,6 +312,8 @@ final class EnhanceTests: XCTestCase {
         XCTAssertNotEqual(pixels(toned), pixels(input))
         // lowLight hook은 portrait 결과(2×2) 이후에 호출된다
         XCTAssertEqual(lowLightExtent, CGRect(x: 0, y: 0, width: 2, height: 2))
+        // lowLight hook은 강도 lowLight/100을 받는다
+        XCTAssertEqual(try XCTUnwrap(lowLightStrength), 0.7, accuracy: 1e-9)
         XCTAssertEqual(out.extent, CGRect(x: 0, y: 0, width: 2, height: 2))
     }
 

@@ -1,16 +1,16 @@
-// 앨범 보정 화면의 조정 슬라이더(기본 7종 + 인물 모드의 피부·윤곽·눈·치아). 라벨 더블탭으로 0 리셋.
+// 앨범 보정 화면의 조정 슬라이더(기본 8종 + 인물 모드의 피부·윤곽·눈·치아). 라벨 더블탭으로 0 리셋.
 import SwiftUI
 
 /// 슬라이더 항목. `keyPath`로 `PresetParams`의 필드와 연결된다.
 enum AdjustmentKind: String, CaseIterable, Identifiable {
-    case exposure, contrast, highlights, shadows, temperature, vibrance, sharpness
+    case exposure, contrast, highlights, shadows, temperature, vibrance, sharpness, lowLight
     /// 인물 모드 전용(`PresetParams.portrait` — 프리셋에 함께 저장된다).
     case skin, slim, eyes, teeth
 
     var id: String { rawValue }
 
-    /// 기본 조정 7종.
-    static let basic: [AdjustmentKind] = [.exposure, .contrast, .highlights, .shadows, .temperature, .vibrance, .sharpness]
+    /// 기본 조정 8종(저조도는 R1-S7).
+    static let basic: [AdjustmentKind] = [.exposure, .contrast, .highlights, .shadows, .temperature, .vibrance, .sharpness, .lowLight]
     /// 인물 모드가 켜져 있을 때만 보이는 항목.
     static let portrait: [AdjustmentKind] = [.skin, .slim, .eyes, .teeth]
 
@@ -23,6 +23,7 @@ enum AdjustmentKind: String, CaseIterable, Identifiable {
         case .temperature: return "색온도"
         case .vibrance: return "생동감"
         case .sharpness: return "선명도"
+        case .lowLight: return "저조도"
         case .skin: return "피부"
         case .slim: return "윤곽"
         case .eyes: return "눈"
@@ -39,6 +40,7 @@ enum AdjustmentKind: String, CaseIterable, Identifiable {
         case .temperature: return "thermometer.medium"
         case .vibrance: return "drop"
         case .sharpness: return "triangle"
+        case .lowLight: return "moon.stars"
         case .skin: return "face.smiling"
         case .slim: return "face.dashed"   // TODO(검증): SF Symbol 이름
         case .eyes: return "eye"
@@ -46,10 +48,10 @@ enum AdjustmentKind: String, CaseIterable, Identifiable {
         }
     }
 
-    /// 선명도·피부·윤곽·눈·치아는 0…100, 나머지는 −100…100 (`Mapping` 입력 범위와 같다).
+    /// 선명도·저조도·피부·윤곽·눈·치아는 0…100, 나머지는 −100…100 (`Mapping` 입력 범위와 같다).
     var range: ClosedRange<Double> {
         switch self {
-        case .sharpness, .skin, .slim, .eyes, .teeth: return 0...100
+        case .sharpness, .lowLight, .skin, .slim, .eyes, .teeth: return 0...100
         default: return -100...100
         }
     }
@@ -64,6 +66,7 @@ enum AdjustmentKind: String, CaseIterable, Identifiable {
         case .temperature: return \.temperature
         case .vibrance: return \.vibrance
         case .sharpness: return \.sharpness
+        case .lowLight: return \.lowLight
         case .skin: return \.portrait.skinSmooth
         case .slim: return \.portrait.faceSlim
         case .eyes: return \.portrait.eyeEnlarge
@@ -78,7 +81,7 @@ enum AdjustmentKind: String, CaseIterable, Identifiable {
     }
 }
 
-/// 슬라이더 묶음(기본 7종, 또는 `kinds`로 지정). 값이 바뀔 때마다 `params` 전체가 갱신된다(렌더 디바운스는 ViewModel 담당).
+/// 슬라이더 묶음(기본 8종, 또는 `kinds`로 지정). 값이 바뀔 때마다 `params` 전체가 갱신된다(렌더 디바운스는 ViewModel 담당).
 struct AdjustmentSliders: View {
     @Binding var params: PresetParams
     let kinds: [AdjustmentKind]

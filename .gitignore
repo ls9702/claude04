@@ -16,3 +16,5 @@ scripts/device.local
 .claude/settings.local.json
 # XcodeGen이 project.yml의 info.properties로 생성 (커밋하지 않음)
 TripShot/Info.plist
+# Core ML 컴파일 결과(Xcode가 .mlpackage에서 빌드 시 생성). 원본 .mlpackage만 커밋한다.
+*.mlmodelc

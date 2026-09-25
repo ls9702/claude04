@@ -21,6 +21,8 @@ final class AppServices: ObservableObject {
     let faceDetector = FaceDetector()
     /// 인물 보정 Metal 커널. 처음 쓸 때 한 번 로드한다. 로드 실패면 nil(피부색 마스크·주파수 분리 없이 폴백).
     private(set) lazy var portraitKernels: PortraitKernels? = PortraitKernels.load()
+    /// 저조도(Zero-DCE++) 보정기. 처음 쓸 때 모델·커널을 로드한다. 모델이 없으면 폴백 보정으로 동작한다.
+    private(set) lazy var lowLight = LowLightEnhancer()
 
     /// 인물 모드 스위치. 마지막 상태를 기억한다(PLAN §3.3). 기본 꺼짐.
     @Published var portraitModeEnabled: Bool {
@@ -44,13 +46,18 @@ final class AppServices: ObservableObject {
     }
 
     /// 렌더마다 넘길 파이프라인 컨텍스트. 렌더러의 공유 컨텍스트(LUT 등)를 복사하고
-    /// 인물 단계 hook만 스위치 상태에 맞춰 바꾼다. 공유 컨텍스트 자체는 바꾸지 않는다.
+    /// 인물 단계 hook(스위치 상태)과 저조도 hook(품질)을 채운다. 공유 컨텍스트 자체는 바꾸지 않는다.
     /// - Parameters:
     ///   - quality: `.full`(저장·앨범·촬영 후처리) = 매번 검출 + 주파수 분리.
     ///     `.live`(라이브 프리뷰) = `liveTracker`의 평활 검출 + 경량 블러. `.live`인데 트래커가 없으면 `.full`.
+    ///     저조도 hook은 `.full`에서만 넣는다(`.live`는 트래커 유무와 관계없이 저조도 없음).
     ///   - liveTracker: 라이브 경로의 트래커(CaptureViewModel 소유, 비디오 큐 전용).
     func pipelineContext(quality: PortraitQuality = .full, liveTracker: SmoothedFaceTracker? = nil) -> PipelineContext {
         var context = renderer.pipelineContext
+        // 5단계 저조도: 저장·앨범·촬영 후처리(.full)에서만. 라이브 프리뷰는 비활성(PLAN §3.2).
+        // 앨범 프리뷰(EnhanceViewModel)도 .full이라 1024 프리뷰에서 모델이 돈다 — 512 추론 수십 ms라
+        // 80ms 디바운스 렌더에 충분하고, 저장 결과를 미리 볼 수 있어 따로 끄는 플래그는 두지 않는다.
+        context.lowLightStage = quality == .full ? LowLightStage.make(enhancer: lowLight) : nil
         guard portraitModeEnabled else {
             context.portraitStage = nil
             return context

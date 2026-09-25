@@ -4,6 +4,31 @@
 
 ---
 
+## R1-S7 저조도 · 2026-09-26 · 서브에이전트(Opus 5.5) 작성분 · 결과: **통과 (수정 없음)** — 모델 변환은 Mac 대기
+
+### 필수 항목
+- 사진 보관함·메타데이터: 미접촉. 외부 Swift 패키지·project.yml 변경 없음(`.gitignore`에 `*.mlmodelc` 추가만).
+- 큐: `LowLightEnhancer`는 잠금으로 예측 직렬화, 입력 버퍼 재사용. 파이프라인 hook 호출 시점(그래프 구성 시)에 512 렌더·예측이 동기로 일어나며 `EnhanceRenderer` 잠금 안에서 실행됨 — 저장 경로에 적합. 충족.
+- 실패 시 건너뜀: 모델 없음·커널 없음·예측 실패 모두 감마+섀도우 폴백으로 동작하고 사유를 로그·`lastPath`에 기록. 충족.
+- 설계 일치(§3.2): 5단계 위치, `lowLight > 0`일 때만, 라이브(.live)에서는 비활성, 저장·앨범(.full)에서만. 모델 입력 512·타일 없음(곡선 적용은 픽셀 단위 커널이라 풀해상도 1패스)은 타당. 충족.
+- 곡선 방향: 원 코드 `x + A·(x² − x)`에서 A<0이 밝힘. 지시안(A=1이 밝힘)이 틀렸고 서브에이전트가 코드 기준으로 바로잡음. 테스트도 그 기준.
+
+### 잘한 점
+- 작업 색공간이 선형 P3이므로 커널 안에서 감마 변환 후 곡선 적용, 0~1 밖 값은 보존(확장 색역).
+- 변환 스크립트가 `CurveNet`으로 A 맵까지만 내보내고 업샘플·곡선은 Swift 담당 → 어떤 해상도에도 대응.
+- 출력 dtype(float16/32)·입력 이름 폴백 처리.
+
+### 권고 (Mac 변환·실기기 B5)
+- `tools/convert_zero_dce.py` 실행 후 `--check`로 최대 오차 ≤ 0.02 확인, `.mlpackage` 커밋(약 40KB). XcodeGen이 `.mlpackage`를 단일 파일로 잡는지(`docs/MAC_SETUP.md` §10-5).
+- 모델 입력 버퍼 방향(`testModelInputKeepsOrientation`)이 실패하면 `CIRenderDestination.isFlipped = true`.
+- 야경 프리셋(lowLight 70)으로 어두운 장면 저장 3초 이내, 과노출·색 편이·노이즈 증폭 확인. 과하면 프리셋 값을 50으로.
+- 첫 `.full` 컨텍스트 생성 시 모델을 메인에서 lazy 로드한다. 지연이 느껴지면 `AppServices.init`에서 백그라운드 프리로드.
+
+### 컴파일 확신이 낮은 지점 (Mac 빌드 시 우선 확인)
+- `EnhanceKernels.metal`의 `static inline` 헬퍼·동적 반복문(`int(iterations)`)이 `-fcikernel`에서 허용되는지. 막히면 인라인·8회 고정.
+- `CIRenderDestination(pixelBuffer:)` 기본 방향, `MLFeatureValue(pixelBuffer:)` 입력 이름 매칭.
+- 스크립트의 레이어 이름(`e_conv1`~`e_conv7`)이 원 저장소와 같은지.
+
 ## R1-S6 인물 모드 ② 윤곽 · 2026-09-26 · 서브에이전트(Opus 5.5) 작성분 · 결과: **통과 (수정 없음)**
 
 ### 필수 항목

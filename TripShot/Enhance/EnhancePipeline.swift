@@ -29,8 +29,9 @@ struct PipelineContext {
     /// 3단계 인물 보정 hook (`PortraitStage.full`/`.live`). nil이면 건너뜀.
     /// 결과의 `skinMask`는 4단계 선명도에 전달된다(PLAN §3.2: 선명도는 피부 마스크 바깥에만).
     var portraitStage: ((CIImage, PortraitParams) -> PortraitResult)? = nil
-    /// 5단계 저조도 hook (R1-S7 Zero-DCE++). nil이면 건너뜀. `params.lowLight > 0`일 때만 호출.
-    var lowLightStage: ((CIImage) -> CIImage)? = nil
+    /// 5단계 저조도 hook (R1-S7 Zero-DCE++, `LowLightStage.make`). nil이면 건너뜀. `params.lowLight > 0`일 때만 호출.
+    /// 두 번째 인자는 강도 0~1(`params.lowLight / 100`). 라이브 프리뷰 컨텍스트는 nil(PLAN §3.2: 프리뷰 비활성·저장 시만).
+    var lowLightStage: ((CIImage, Double) -> CIImage)? = nil
     /// 7단계 수평 보정 회전각(라디안, 반시계 방향 +). 이미지를 이 각도만큼 돌려 수평을 맞춘다.
     /// Vision 검출 결과를 호출 측이 변환해 넣는다. nil이면 수평 보정 없음.
     var horizonAngle: Double? = nil
@@ -215,10 +216,11 @@ enum EnhancePipeline {
 
     // MARK: 5 저조도 (hook)
 
-    /// 저조도 hook. `params.lowLight == 0`이거나 hook이 없으면 입력 그대로.
-    static func applyLowLight(_ params: PresetParams, to input: CIImage, hook: ((CIImage) -> CIImage)?) -> CIImage {
-        guard let hook, params.lowLight > 0 else { return input }
-        return hook(input)
+    /// 저조도 hook. `params.lowLight == 0`이거나 hook이 없으면 입력 그대로. hook에는 강도 0~1을 넘긴다.
+    static func applyLowLight(_ params: PresetParams, to input: CIImage, hook: ((CIImage, Double) -> CIImage)?) -> CIImage {
+        let strength = Mapping.lowLightStrength(params.lowLight)
+        guard let hook, strength > 0 else { return input }
+        return hook(input, strength)
     }
 
     // MARK: 6 색감 룩 (LUT)
@@ -333,6 +335,9 @@ enum Mapping {
     static func clarity(_ v: Double, resolutionScale: Double) -> (radius: Double, intensity: Double) {
         (radius: 20 * max(resolutionScale, 0.25), intensity: clampUnsigned(v) / 100 * 0.5)
     }
+
+    /// 0…100 → 저조도 강도 0…1 (Zero-DCE++ 곡선 결과와 원본의 혼합 비율)
+    static func lowLightStrength(_ v: Double) -> Double { clampUnsigned(v) / 100 }
 
     /// 0…100 → 디졸브 비율 0…1
     static func lutMix(_ v: Double) -> Double { clampUnsigned(v) / 100 }

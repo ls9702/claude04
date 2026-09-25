@@ -44,6 +44,7 @@ struct SettingsView: View {
                 }
                 Section("정보") {
                     LabeledContent("버전", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "-")
+                    LabeledContent("저조도 모델", value: services.lowLight.isModelAvailable ? "있음" : "없음(폴백)")
                     Text("무료 Apple ID 서명은 설치 후 7일간 유효합니다. 만료 전 Mac에서 다시 설치하세요.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }

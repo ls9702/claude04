@@ -79,3 +79,46 @@ Xcode 왼쪽 ⚠️ 아이콘(Issue Navigator)에서 오류를 복사해 채팅�
 3. iPhone 설치용 UDID: `xcrun devicectl list devices` 결과의 Identifier를 `scripts/device.local`에 저장(커밋되지 않음).
 4. 시뮬레이터 이름이 다르면 `SIM="platform=iOS Simulator,name=iPhone 16" scripts/build.sh`처럼 지정.
 5. 작업 후 `scripts/sync.sh`로 push. 클라우드 세션이 그 결과를 이어받는다.
+
+## 10. 저조도 모델 변환 (R1-S7, Zero-DCE++ → Core ML)
+앱은 모델이 없어도 빌드·동작한다(감마·섀도우 폴백). 모델을 넣으면 야경 프리셋(저조도 70)의 저장 결과가 Zero-DCE++로 개선된다.
+라이선스: Zero-DCE++는 **연구용**(PLAN §7) — 개인 사용 앱에만 쓴다.
+
+1. Python 환경(3.10~3.12 권장. 3.13은 torch/coremltools 휠이 없을 수 있음):
+   ```bash
+   python3 -m venv ~/.venvs/tripshot-ml && source ~/.venvs/tripshot-ml/bin/activate
+   pip install torch coremltools pillow numpy
+   ```
+2. 원 저장소 클론(가중치 포함, 저장소 밖에 둔다):
+   ```bash
+   git clone https://github.com/Li-Chongyi/Zero-DCE.git ~/src/Zero-DCE
+   ls ~/src/Zero-DCE/Zero-DCE++/snapshots_Zero_DCE++/Epoch99.pth   # 있어야 함
+   ```
+3. 변환(저장소 루트에서). `--check`에 어두운 사진을 주면 PyTorch와 Core ML의 곡선 맵 A 오차를 출력한다:
+   ```bash
+   python3 tools/convert_zero_dce.py --repo ~/src/Zero-DCE \
+       --out TripShot/Resources/ML/ZeroDCEpp.mlpackage --size 512 --check ~/Pictures/night.jpg
+   ```
+   - 확인: "가중치 로드 … 파라미터 약 10,000개", "A 맵 비교: 최대 오차" 0.02 이하(FLOAT16). 크면 `--fp32`로 다시 변환.
+   - `model.py`의 레이어 이름·forward가 스크립트의 `CurveNet`과 다르면(`AttributeError: e_conv…`) `CurveNet.forward`를 원본에 맞게 고친다.
+   - `--size`는 `LowLightEnhancer.modelInputSize`(512)와 같아야 한다.
+4. `TripShot/Resources/ML/ZeroDCEpp.mlpackage`(수십 KB 예상)를 **커밋**한다. `.mlmodelc`(컴파일 결과)는 gitignore됨.
+5. `scripts/build.sh` 후 확인:
+   - Xcode 내비게이터에서 `ZeroDCEpp.mlpackage`가 **파일 하나**(Core ML 아이콘)로 보이고 TripShot 타깃의 Compile Sources에 들어 있는지.
+     빌드 결과 앱 번들에 `ZeroDCEpp.mlmodelc`가 있는지: `find ~/Library/Developer/Xcode/DerivedData -name ZeroDCEpp.mlmodelc`.
+   - XcodeGen이 `.mlpackage`를 폴더(하위 파일 여러 개)로 잡으면 `project.yml`에서 폴더 소스에서 빼고 파일로 추가한다:
+     ```yaml
+     sources:
+       - path: TripShot
+         excludes:
+           - "**/.gitkeep"
+           - "Resources/ML/*.mlpackage/**"
+           - "Resources/ML/*.mlpackage"
+       - path: TripShot/Resources/ML/ZeroDCEpp.mlpackage
+         type: file
+         buildPhase: sources
+     ```
+   - Xcode가 `ZeroDCEpp` Swift 클래스를 자동 생성하지만 앱은 쓰지 않는다(`MLModel`로 직접 호출).
+6. 테스트: `scripts/test.sh` → `LowLightTests.testBundledModelEnhancesDarkImage`가 건너뛰지 않고 통과하는지(모델 없으면 XCTSkip).
+7. 실기기: 설정 탭 "정보"의 **저조도 모델: 있음** 확인 → 야경 프리셋으로 어두운 장면 촬영·저장. 저장 3초 이내, 과노출·색 틀어짐·노이즈 증폭을 BUILD_LOG에 기록.
+   Console.app에서 서브시스템 `com.ls9702.tripshot`, 카테고리 `lowlight`로 추론 시간·폴백 이유를 볼 수 있다.
