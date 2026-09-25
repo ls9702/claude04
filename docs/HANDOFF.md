@@ -9,6 +9,7 @@
 ## 진행 중
 | 세션 | 단계 | 상태 | 시작 | 메모 |
 |---|---|---|---|---|
+| 클라우드 | R1-S1 | 작성 중 (Opus 5.5 서브에이전트 위임) | 09-25 | `TripShot/Enhance/` 엔진·LUT 파서·테스트 |
 | Mac | R1-S0 | 첫 빌드 대기 | – | `docs/MAC_SETUP.md` §1~§3 후 `scripts/build.sh` → BUILD_LOG |
 
 ## 단계 상태
