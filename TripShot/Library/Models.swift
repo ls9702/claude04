@@ -91,6 +91,23 @@ struct ShotSpec: Codable, Equatable, Identifiable {
     var name: String
     var hint: String = ""
     var targetSeconds: Double
+
+    init(id: UUID = UUID(), name: String, hint: String = "", targetSeconds: Double) {
+        self.id = id
+        self.name = name
+        self.hint = hint
+        self.targetSeconds = targetSeconds
+    }
+
+    // 자동 합성 디코더는 기본값이 있어도 키가 반드시 있어야 하므로,
+    // `id`·`hint`가 없는 번들 JSON(default-templates.json)도 읽히도록 직접 구현한다.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        name = try c.decode(String.self, forKey: .name)
+        hint = try c.decodeIfPresent(String.self, forKey: .hint) ?? ""
+        targetSeconds = try c.decode(Double.self, forKey: .targetSeconds)
+    }
 }
 
 struct TemplateDefinition: Codable {

@@ -61,6 +61,10 @@ targets:
     sources: [TripShotTests]
     dependencies:
       - target: TripShot
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: true   # 테스트 번들 Info.plist 자동 생성 (없으면 코드 서명 실패)
+        PRODUCT_BUNDLE_IDENTIFIER: com.ls9702.tripshotTests
 schemes:
   TripShot:
     build:
