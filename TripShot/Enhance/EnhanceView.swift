@@ -245,7 +245,7 @@ private struct EnhanceScreen: View {
                 .font(.subheadline.weight(.semibold))
 
                 VStack(alignment: .leading, spacing: 8) {
-                    // 인물 모드 스위치(앱 상태, 촬영 화면과 공유). 켜져 있을 때만 피부·치아 슬라이더를 보인다.
+                    // 인물 모드 스위치(앱 상태, 촬영 화면과 공유). 켜져 있을 때만 피부·윤곽·눈·치아 슬라이더를 보인다.
                     Toggle(isOn: $services.portraitModeEnabled) {
                         Label("인물 모드", systemImage: "person.crop.circle")
                     }

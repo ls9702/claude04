@@ -3,7 +3,9 @@ import CoreImage
 
 /// 인물 보정 단계. `PipelineContext.portraitStage`에 넣는 클로저를 제공한다.
 /// 인물 모드 스위치(앱 상태)가 켜져 있을 때만 `AppServices.pipelineContext(...)`가 이 hook을 넣는다.
-/// R1-S5: 피부 부드럽게·잡티·치아. (얼굴 윤곽·눈 확대 워프는 R1-S6.)
+/// R1-S5: 피부 부드럽게·잡티·치아. R1-S6: 얼굴 윤곽·눈 확대 워프.
+///
+/// 순서: **워프 먼저** → 랜드마크·boundingBox를 워프 후 좌표로 옮김 → 피부 보정(마스크가 워프된 얼굴에 맞는다).
 enum PortraitStage {
     /// 저장·앨범용. 호출마다 얼굴을 검출한다(긴 변 1024로 줄여 검출, 좌표는 원본 스케일).
     /// 얼굴이 없으면 입력 그대로 + 마스크 nil.
@@ -13,7 +15,7 @@ enum PortraitStage {
             guard isActive(params) else { return PortraitResult(image: image, skinMask: nil) }
             let faces = detector.detect(in: image, detectionMaxDimension: FaceDetector.defaultDetectionMaxDimension)
             guard !faces.isEmpty else { return PortraitResult(image: image, skinMask: nil) }
-            return SkinSmoothing.process(image, faces: faces, params: params, quality: .full, kernels: kernels)
+            return process(image, faces: faces, params: params, quality: .full, kernels: kernels)
         }
     }
 
@@ -26,12 +28,19 @@ enum PortraitStage {
             }
             let faces = tracker.faces(in: image)
             guard !faces.isEmpty else { return PortraitResult(image: image, skinMask: nil) }
-            return SkinSmoothing.process(image, faces: faces, params: params, quality: .live, kernels: kernels)
+            return process(image, faces: faces, params: params, quality: .live, kernels: kernels)
         }
     }
 
-    /// 이번 단계에서 효과가 있는 값이 하나라도 있는지. (R1-S6에서 faceSlim·eyeEnlarge를 추가한다.)
+    /// 워프 → (워프 후 좌표의 얼굴로) 피부·치아 보정. 순수 함수.
+    static func process(_ image: CIImage, faces: [DetectedFace], params: PortraitParams,
+                        quality: PortraitQuality, kernels: PortraitKernels?) -> PortraitResult {
+        let warped = FaceWarp.process(image, faces: faces, params: params, quality: quality, kernels: kernels)
+        return SkinSmoothing.process(warped.image, faces: warped.faces, params: params, quality: quality, kernels: kernels)
+    }
+
+    /// 이번 단계에서 효과가 있는 값이 하나라도 있는지.
     static func isActive(_ params: PortraitParams) -> Bool {
-        params.skinSmooth > 0 || params.teethWhiten > 0
+        params.skinSmooth > 0 || params.teethWhiten > 0 || params.faceSlim > 0 || params.eyeEnlarge > 0
     }
 }
