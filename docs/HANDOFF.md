@@ -3,8 +3,8 @@
 두 세션(클라우드 = 지휘·서브에이전트 작성·리뷰 / Mac = 빌드 위주)이 공유하는 현재 상태. **작업 전 읽고, 작업 후 갱신한다.**
 
 ## ▶ 다음 시작 지점
-**R1-S2 저장·메타데이터** — 클라우드 세션: Opus 5.5 서브에이전트 작성 → Fable 리뷰 → 커밋. 정의: `docs/PLAN.md` §8.2, §3.4.
-선행: R1-S1의 `EnhanceRenderer.renderFullResolution`(CGImage 반환)을 입력으로 HEIF/JPEG 인코딩 + 메타데이터 복사 + PhotoKit 비파괴 편집 출력을 만든다. `docs/REVIEW_LOG.md`의 R1-S1 권고(RGBA16, portrait 스위치) 참고.
+**R1-S3 앨범 보정 화면** — 클라우드 세션: Opus 5.5 서브에이전트 작성 → Fable 리뷰 → 커밋. 정의: `docs/PLAN.md` §8.2. **빌드 체크포인트** 단계.
+선행: R1-S1 `EnhanceRenderer.previewImage`, R1-S2 `PhotoSaver.saveNonDestructive/saveAsCopy`. `docs/REVIEW_LOG.md`의 R1-S2 권고(AppServices 주입, adjustmentData 복원) 반영.
 
 ## 진행 중
 | 세션 | 단계 | 상태 | 시작 | 메모 |
@@ -16,7 +16,7 @@
 |---|---|---|---|
 | R1-S0 골격 | 작성 완료 · 빌드 미검증 | 8318c82 | Mac 첫 빌드 대상 |
 | R1-S1 보정 엔진 | 작성·리뷰 완료 · 빌드 미검증 | 09805c2 | REVIEW_LOG 참고. 테스트 25개 |
-| R1-S2 저장·메타데이터 | 대기 | | |
+| R1-S2 저장·메타데이터 | 작성·리뷰 완료 · 빌드 미검증 | 8d105f9 | REVIEW_LOG 참고. 테스트 21개 |
 | R1-S3 앨범 보정 화면 | 대기 | | 빌드 체크포인트 |
 | R1-S4 라이브 보정 프리뷰 | 대기 | | 빌드 체크포인트 |
 | R1-S5 인물 모드 ① 피부 | 대기 | | |

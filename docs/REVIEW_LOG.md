@@ -4,6 +4,26 @@
 
 ---
 
+## R1-S2 저장·메타데이터 · 2026-09-25 · 서브에이전트(Opus 5.5) 작성분 · 결과: **통과 (수정 없음)**
+
+### 필수 항목
+- **사진 보관함·메타데이터 보존(§3.4)**: 비파괴 편집은 `PHContentEditingOutput`+`PHAdjustmentData`로 같은 에셋에 얹어 촬영일·위치·EXIF가 자동 유지되고, 렌더 파일에도 Exif/GPS/TIFF/IPTC/ExifAux/MakerApple을 복사. 사본 저장은 `creationDate`·`location`을 원본 에셋(없으면 파일 메타)에서 설정. 촬영은 재인코딩 없이 원본 바이트 저장 + 촬영 시 GPS를 `AVCapturePhotoSettings.metadata`에 기록. **충족.**
+- **원본 손상 경로 없음**: 원본 파일은 읽기만, 쓰기는 PhotoKit이 준 URL에만, `performChanges`는 렌더·인코딩·파일 쓰기 후 마지막 한 번. 충족.
+- 외부 패키지: 없음. project.yml 변경 없음.
+- 큐 분리: `pendingLocations`는 세션 큐에서만 접근, `@Published`는 메인에서만 변경. LocationProvider 델리게이트 → 메인 디스패치. 충족.
+- 권한 거부: 사진 보관함 거부는 `notAuthorized`로 throw, 위치 거부는 nil 유지. 충족.
+- 설계 일치: 충족. 요청과 다르게 한 10개 항목 모두 타당(course→GPSTrack, 고도 유효성 검사, 수평각을 adjustContext로 전달 등).
+
+### 권고 (다음 단계)
+- (R1-S3) `LocationProvider`·`PhotoSaver`를 앱에서 생성해 `CameraService`에 주입하는 연결이 아직 없음. R1-S3에서 앱 수준 의존성 컨테이너(`AppServices`)를 만들어 연결할 것.
+- (R1-S3) 비파괴 편집 입력이 이전 TripShot 편집이면 `input.adjustmentData`에서 `AdjustmentPayload`를 복원해 슬라이더 초기값으로 쓸 것(현재는 읽지 않음).
+- (B2 실기기) 16비트 렌더 → HEIC가 실제 10비트로 기록되는지, 사진 앱 정보 패널에 위치·날짜가 유지되는지, "원본으로 되돌리기"가 동작하는지 확인.
+
+### 컴파일 확신이 낮은 지점 (Mac 빌드 시 우선 확인)
+- `PHContentEditingOutput.supportedRenderedContentTypes` / `renderedContentURL(for:)` (iOS 17+) 이름·throws 여부.
+- `#available(iOS 17, *)` 분기는 배포 대상이 26이라 경고 가능(오류 아님).
+- `CGImageSourceCopyPropertiesAtIndex` 결과의 하위 딕셔너리를 `as? [CFString: Any]`로 캐스팅하는 부분.
+
 ## R1-S1 보정 엔진 · 2026-09-25 · 서브에이전트(Opus 5.5) 작성분 · 결과: **통과 (수정 1건 반영)**
 
 ### 필수 항목
