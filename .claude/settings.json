@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(scripts/build.sh)",
+      "Bash(scripts/test.sh)",
+      "Bash(scripts/install-device.sh)",
+      "Bash(scripts/sync.sh)",
+      "Bash(xcodegen:*)",
+      "Bash(xcodebuild:*)",
+      "Bash(xcrun:*)",
+      "Bash(git pull:*)",
+      "Bash(git push:*)",
+      "Bash(git status:*)",
+      "Bash(git log:*)",
+      "Bash(git diff:*)"
+    ]
+  }
+}

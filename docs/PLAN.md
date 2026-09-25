@@ -239,7 +239,29 @@ A 단계 약 12일(작성), B 단계 약 10일(왕복 포함). B1·B2가 끝나�
 | 09-25 | **v0.4 확정.** 라이브 보정은 필수. 무료 Apple ID 7일 갱신 방식 적용 |
 | 09-25 | **v0.5.** 사진 보정이 주 기능, 쇼츠는 보조. 결과는 사진 보관함에 저장하고 EXIF·GPS·날짜 보존(§3.4). 실행 계획을 Mac 빌드 전(A)·후(B)로 분리, 사진 먼저 |
 
-## 11. 다음 행동
-1. **A1 사진 보정 파이프라인** 작성 → A2 메타데이터 보존 → A3 보정 화면. 여기까지 커밋되면 첫 Mac 빌드 요청.
-2. 사용자: 그동안 `docs/MAC_SETUP.md` §1(macOS·Xcode 업데이트, 개발자 모드, XcodeGen 설치)을 준비.
-3. 첫 빌드 로그가 오면 B0 → B1 → B2 순으로 사진 기능을 실기기에서 확정.
+## 11. 두 세션 협업 방식 (클라우드 ↔ Mac)
+
+Mac에서 별도의 Claude Code 세션을 열어 같은 저장소로 작업한다. 연결 고리는 **git 브랜치 하나 + 문서 두 개**다.
+
+```
+클라우드 세션 (Linux)                        Mac 세션 (MacBook Air M2)
+  코드 작성 (A 단계) ─── push ──▶ 공유 브랜치 ◀── pull ─── scripts/build.sh 빌드·테스트
+  BUILD_LOG 읽고 수정 ◀── pull ── 공유 브랜치 ◀── push ─── 컴파일 오류 최소 수정, BUILD_LOG 기록
+                                                      scripts/install-device.sh → iPhone 설치
+                                                      실기기 관찰·튜닝 (B 단계)
+```
+
+| 파일 | 역할 |
+|---|---|
+| `CLAUDE.md` | 두 세션 공통 규약: 역할, 브랜치·커밋 규칙, 핸드오프 절차, 코드 원칙. Claude Code가 세션 시작 시 자동으로 읽는다 |
+| `docs/HANDOFF.md` | 현재 누가 무엇을 하는지, 단계별 상태, 논의 필요 항목. 작업 전 읽고 후 갱신 |
+| `docs/BUILD_LOG.md` | Mac 세션이 빌드·테스트·설치 결과를 기록. 클라우드 세션이 읽고 고침 |
+| `scripts/build.sh` `test.sh` `install-device.sh` `sync.sh` | Mac 세션이 명령 한 줄로 빌드·테스트·설치·동기화. Xcode GUI 없이도 동작 |
+| `.claude/settings.json` | Mac 세션이 위 스크립트와 xcodebuild·git을 확인 없이 실행하도록 허용 |
+
+규칙 요약: 작업 전 `pull --rebase`, 작업 후 즉시 push. Mac 세션은 컴파일 오류를 최소 수정으로 고치고 설계 변경은 HANDOFF "논의 필요"에 적는다. 클라우드 세션은 턴 시작마다 BUILD_LOG를 읽고 실패부터 고친다.
+
+## 12. 다음 행동
+1. **Mac 세션 시작**: `docs/MAC_SETUP.md` §1 준비 → 저장소 clone → Claude Code 실행 → "HANDOFF.md의 'Mac 세션이 처음 할 일'을 진행해" 지시. A0 골격 첫 빌드·설치 → BUILD_LOG 기록.
+2. **클라우드 세션**: 동시에 A1 사진 보정 파이프라인 → A2 메타데이터 → A3 보정 화면 작성. BUILD_LOG에 실패가 오면 그것부터 수정.
+3. A3까지 빌드 통과하면 B1·B2로 사진 기능을 실기기에서 확정.

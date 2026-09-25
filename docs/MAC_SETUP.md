@@ -72,3 +72,10 @@ Xcode 왼쪽 ⚠️ 아이콘(Issue Navigator)에서 오류를 복사해 채팅�
 | 기기가 목록에 안 보임 | 케이블 재연결, iPhone 잠금 해제, 개발자 모드 확인 |
 | "Unable to install… maximum number of apps" | 무료 계정 앱 3개 제한. 다른 테스트 앱 삭제 |
 | 패키지 해석 실패 | 인터넷 확인 후 File → Packages → Reset Package Caches |
+
+## 9. Mac에서 Claude Code 세션으로 작업하기
+1. 저장소 폴더에서 `claude` 실행. `CLAUDE.md`가 자동으로 읽혀 규약을 안다.
+2. 첫 지시 예: **"docs/HANDOFF.md의 'Mac 세션이 처음 할 일'을 순서대로 진행하고 결과를 BUILD_LOG.md에 기록해 줘"**
+3. iPhone 설치용 UDID: `xcrun devicectl list devices` 결과의 Identifier를 `scripts/device.local`에 저장(커밋되지 않음).
+4. 시뮬레이터 이름이 다르면 `SIM="platform=iOS Simulator,name=iPhone 16" scripts/build.sh`처럼 지정.
+5. 작업 후 `scripts/sync.sh`로 push. 클라우드 세션이 그 결과를 이어받는다.

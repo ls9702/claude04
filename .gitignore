@@ -10,3 +10,7 @@ build/
 # SwiftPM
 .swiftpm/
 Package.resolved
+# 로컬 전용
+scripts/device.local
+.env.local
+.claude/settings.local.json
