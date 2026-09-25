@@ -1,0 +1,28 @@
+[
+  {
+    "name": "짧게 (15초)",
+    "shots": [
+      { "name": "오프닝", "hint": "장소가 드러나는 넓은 샷", "targetSeconds": 3 },
+      { "name": "장면 1", "hint": "움직임이 있는 컷", "targetSeconds": 4 },
+      { "name": "장면 2", "hint": "다른 각도", "targetSeconds": 4 },
+      { "name": "엔딩", "hint": "인물 또는 여운이 남는 컷", "targetSeconds": 4 }
+    ]
+  },
+  {
+    "name": "기본 (30초)",
+    "shots": [
+      { "name": "오프닝", "hint": "장소가 드러나는 넓은 샷", "targetSeconds": 3 },
+      { "name": "장면 1", "hint": "", "targetSeconds": 4 },
+      { "name": "장면 2", "hint": "", "targetSeconds": 4 },
+      { "name": "장면 3", "hint": "", "targetSeconds": 4 },
+      { "name": "장면 4", "hint": "", "targetSeconds": 4 },
+      { "name": "장면 5", "hint": "", "targetSeconds": 4 },
+      { "name": "음식/디테일", "hint": "가까이서", "targetSeconds": 4 },
+      { "name": "엔딩", "hint": "", "targetSeconds": 3 }
+    ]
+  },
+  {
+    "name": "자유",
+    "shots": []
+  }
+]
