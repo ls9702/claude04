@@ -66,6 +66,10 @@ final class CameraService: NSObject, ObservableObject {
     private var activeAspect: AspectRatio = .sixteenByNine
     private let videoOutput = AVCaptureVideoDataOutput()
     private var videoInput: AVCaptureDeviceInput?
+    /// 영상 녹화(R3-S1)용 마이크. 영상 모드에서만 붙인다(사진 모드는 마이크 권한을 묻지 않는다). sessionQueue에서만 접근.
+    private let audioOutput = AVCaptureAudioDataOutput()
+    private var audioInput: AVCaptureDeviceInput?
+    private let audioQueue = DispatchQueue(label: "tripshot.camera.audio", qos: .userInitiated)
     private var configured = false
     /// 사진 방향 결정용(기기를 가로로 들면 가로 사진). sessionQueue에서만 접근. 카메라 전환 시 다시 만든다.
     private var rotationCoordinator: AVCaptureDevice.RotationCoordinator?
@@ -86,6 +90,7 @@ final class CameraService: NSObject, ObservableObject {
     private let handlerLock = NSLock()
     private var _frameHandler: ((CVPixelBuffer, CMTime) -> Void)?
     private var _postCaptureHandler: ((String, Int) -> Void)?
+    private var _audioHandler: ((CMSampleBuffer) -> Void)?
     private var _frameOrientation: CGImagePropertyOrientation = .up
     private var _isPreviewMirrored = false
     private var _preferredFrameRate: Double = 30
@@ -97,6 +102,39 @@ final class CameraService: NSObject, ObservableObject {
     var frameHandler: ((CVPixelBuffer, CMTime) -> Void)? {
         get { handlerLock.withLock { _frameHandler } }
         set { handlerLock.withLock { _frameHandler = newValue } }
+    }
+
+    /// 마이크 샘플 콜백(영상 녹화 중에만 설정). **audioQueue에서** 불린다.
+    var audioHandler: ((CMSampleBuffer) -> Void)? {
+        get { handlerLock.withLock { _audioHandler } }
+        set { handlerLock.withLock { _audioHandler = newValue } }
+    }
+
+    /// 마이크 입력을 붙이거나 뗀다(영상 모드 진입·이탈). 권한은 호출 측이 먼저 받는다. 실패하면 소리 없이 녹화된다.
+    func setAudioEnabled(_ enabled: Bool) {
+        sessionQueue.async { [self] in
+            guard configured else { return }
+            let has = audioInput != nil
+            guard enabled != has else { return }
+            session.beginConfiguration()
+            if enabled {
+                if let mic = AVCaptureDevice.default(for: .audio), let input = try? AVCaptureDeviceInput(device: mic),
+                   session.canAddInput(input) {
+                    session.addInput(input)
+                    audioInput = input
+                    if !session.outputs.contains(audioOutput), session.canAddOutput(audioOutput) {
+                        session.addOutput(audioOutput)
+                        audioOutput.setSampleBufferDelegate(self, queue: audioQueue)
+                    }
+                }
+            } else {
+                if let input = audioInput { session.removeInput(input) }
+                audioInput = nil
+                if session.outputs.contains(audioOutput) { session.removeOutput(audioOutput) }
+            }
+            session.commitConfiguration()
+            Self.log.notice("마이크 \(enabled ? "켬" : "끔", privacy: .public)")
+        }
     }
 
     /// 촬영 원본이 사진 보관함에 저장된 뒤 (새 에셋 localIdentifier, `capturePhoto(tag:)`의 tag)로 불린다.
@@ -581,9 +619,14 @@ final class CameraService: NSObject, ObservableObject {
 
 // MARK: - 프리뷰 프레임
 
-extension CameraService: AVCaptureVideoDataOutputSampleBufferDelegate {
+extension CameraService: AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDataOutputSampleBufferDelegate {
     /// videoQueue. 처리 시간이 길면 다음 프레임이 버려진다(alwaysDiscardsLateVideoFrames).
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        // 영상·마이크 출력이 같은 콜백을 쓴다. 마이크는 녹화 중일 때만 넘긴다.
+        if output === audioOutput {
+            audioHandler?(sampleBuffer)
+            return
+        }
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         if !loggedFirstFrame {
             loggedFirstFrame = true

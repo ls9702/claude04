@@ -22,7 +22,8 @@ struct CaptureView: View {
     /// 효과 선택 시트(R2).
     @State private var showEffects = false
 
-    enum Mode: String, CaseIterable { case photo = "사진", shorts = "쇼츠" }
+    /// 사진 / 영상(R3-S1). 쇼츠는 쇼츠 탭의 프로젝트에서 칸별로 촬영한다.
+    enum Mode: String, CaseIterable { case photo = "사진", video = "영상" }
 
     var body: some View {
         ZStack {
@@ -117,6 +118,11 @@ struct CaptureView: View {
         .onChange(of: services.portraitStrength) { _, _ in vm.refreshPortrait() }
         .onChange(of: services.customPortrait) { _, _ in vm.refreshPortrait() }
         .onChange(of: isPressingPreview) { _, pressing in vm.setBypass(pressing) }
+        // 영상 모드: 마이크를 붙이고 효과는 끈다(영상은 보정만 — 사용자 결정 09-27).
+        .onChange(of: mode) { _, newMode in
+            if newMode == .video { showEffects = false }
+            vm.setVideoMode(newMode == .video)
+        }
         // 전면 카메라 전환 시 한 번만 묻는다. 어느 쪽으로 답하든(바깥 탭 = 나중에) 다시 묻지 않는다.
         .confirmationDialog("셀피에 인물 모드를 켤까요?", isPresented: suggestionBinding, titleVisibility: .visible) {
             Button("켜기") { vm.answerPortraitSuggestion(enable: true) }
@@ -162,6 +168,7 @@ struct CaptureView: View {
             }
             .pickerStyle(.segmented)
             .frame(width: 140)
+            .disabled(vm.isRecording)
 
             VStack(alignment: .trailing, spacing: 2) {
                 HStack(spacing: 10) {
@@ -204,15 +211,24 @@ struct CaptureView: View {
             .allowsHitTesting(false)
     }
 
+    /// 녹화 중 빨간 점 + 경과 시간.
     @ViewBuilder
     private var shortsNotice: some View {
-        if mode == .shorts {
-            Text("쇼츠 촬영 보조는 릴리즈 3에서 추가됩니다")
-                .font(.footnote)
-                .padding(.horizontal, 12).padding(.vertical, 6)
-                .background(.ultraThinMaterial, in: Capsule())
-                .padding(.bottom, 8)
+        if vm.isRecording {
+            HStack(spacing: 6) {
+                Circle().fill(.red).frame(width: 9, height: 9)
+                Text(Self.timeLabel(vm.recordingSeconds))
+                    .font(.subheadline.monospacedDigit().weight(.semibold))
+            }
+            .padding(.horizontal, 12).padding(.vertical, 6)
+            .background(.ultraThinMaterial, in: Capsule())
+            .padding(.bottom, 8)
         }
+    }
+
+    nonisolated static func timeLabel(_ seconds: Double) -> String {
+        let s = max(Int(seconds), 0)
+        return String(format: "%02d:%02d", s / 60, s % 60)
     }
 
     /// 세로 9:16(활성 포맷 16:9 = 저장 사진 비율). 프레임이 4:3으로 폴백돼도 aspect-fill이라 화면은 9:16으로 꽉 찬다
@@ -362,19 +378,21 @@ struct CaptureView: View {
             } else {
                 lensButtons
 
-                if mode == .photo {
-                    lookMenus
-                }
+                lookMenus   // 사진·영상 모두 보정 선택
             }
 
             HStack {
                 thumbnail
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                ShutterButton(isVideo: mode == .shorts) {
-                    guard mode == .photo else { return }
-                    vm.capture()
-                    flashScreen()
+                ShutterButton(isVideo: mode == .video, isRecording: vm.isRecording) {
+                    switch mode {
+                    case .photo:
+                        vm.capture()
+                        flashScreen()
+                    case .video:
+                        if vm.isRecording { Task { await vm.stopRecording() } } else { vm.startRecording() }
+                    }
                 }
 
                 portraitControl
@@ -540,6 +558,19 @@ struct CaptureView: View {
     /// 셔터 오른쪽: [효과] 버튼(R2, 켜져 있으면 노란 테두리 + 그 효과 아이콘) + 후처리 배지 + 얼굴 수.
     private var portraitControl: some View {
         VStack(spacing: 4) {
+            if mode == .photo { effectButton } else { Color.clear.frame(width: 52, height: 52) }
+            // 인물 보정 중인 얼굴 수(PLAN §3.3 "지금 인물 보정 중" 표시). 자리를 유지해 버튼이 흔들리지 않게 한다.
+            Text(faceCountText)
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.yellow)
+                .frame(height: 12)
+                .accessibilityHidden(faceCountText.isEmpty)
+                .accessibilityLabel("인물 보정 중, 얼굴 \(vm.detectedFaceCount)명")
+        }
+    }
+
+    private var effectButton: some View {
+        VStack(spacing: 4) {
             Button {
                 withAnimation(.easeInOut(duration: 0.2)) { showEffects.toggle() }
             } label: {
@@ -558,14 +589,6 @@ struct CaptureView: View {
             .overlay(alignment: .topTrailing) { processingBadge }
             .accessibilityLabel("효과")
             .accessibilityValue(vm.effect?.title ?? "없음")
-
-            // 인물 보정 중인 얼굴 수(PLAN §3.3 "지금 인물 보정 중" 표시). 자리를 유지해 버튼이 흔들리지 않게 한다.
-            Text(faceCountText)
-                .font(.caption2.monospacedDigit())
-                .foregroundStyle(.yellow)
-                .frame(height: 12)
-                .accessibilityHidden(faceCountText.isEmpty)
-                .accessibilityLabel("인물 보정 중, 얼굴 \(vm.detectedFaceCount)명")
         }
     }
 
@@ -603,6 +626,7 @@ struct CaptureView: View {
 
 struct ShutterButton: View {
     var isVideo: Bool
+    var isRecording: Bool = false
     var action: () -> Void
 
     var body: some View {
@@ -610,14 +634,18 @@ struct ShutterButton: View {
             ZStack {
                 Circle().stroke(.white, lineWidth: 4).frame(width: 78, height: 78)
                 if isVideo {
-                    RoundedRectangle(cornerRadius: 8).fill(.red).frame(width: 56, height: 56)
+                    // 녹화 전: 빨간 원, 녹화 중: 빨간 네모(정지).
+                    RoundedRectangle(cornerRadius: isRecording ? 8 : 32)
+                        .fill(.red)
+                        .frame(width: isRecording ? 34 : 64, height: isRecording ? 34 : 64)
+                        .animation(.easeInOut(duration: 0.2), value: isRecording)
                 } else {
                     Circle().fill(.white).frame(width: 64, height: 64)
                 }
             }
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(isVideo ? "녹화" : "촬영")
+        .accessibilityLabel(isVideo ? (isRecording ? "녹화 정지" : "녹화 시작") : "촬영")
     }
 }
 

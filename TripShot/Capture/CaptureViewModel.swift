@@ -17,6 +17,16 @@ import UIKit
 ///
 /// "보이는 대로 저장": 프리뷰와 후처리는 같은 `PresetParams`·`PipelineContext`로 `EnhancePipeline.apply`를 부른다.
 /// 셔터를 누른 순간의 설정을 tag로 보관했다가 그 사진의 후처리에 쓴다.
+/// 녹화기 참조를 여러 큐에서 안전하게 읽고 바꾸는 상자.
+final class RecorderBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _recorder: VideoRecorder?
+    var recorder: VideoRecorder? {
+        get { lock.withLock { _recorder } }
+        set { lock.withLock { _recorder = newValue } }
+    }
+}
+
 @MainActor
 final class CaptureViewModel: ObservableObject {
     /// 후처리 대기 설정을 이 개수보다 많이 보관하지 않는다(촬영 실패로 남은 항목 정리).
@@ -67,6 +77,18 @@ final class CaptureViewModel: ObservableObject {
     @Published private(set) var isBypassed = false
     /// 전면 카메라 전환 시 인물 모드 켜기 제안(한 번만).
     @Published var showPortraitSuggestion = false
+
+    // MARK: 영상 녹화 (R3-S1)
+
+    /// 녹화 중인 녹화기. 비디오 큐(프레임)·오디오 큐(소리)에서 읽으므로 잠금 상자에 둔다.
+    let recorderBox = RecorderBox()
+    @Published private(set) var isRecording = false
+    @Published private(set) var recordingSeconds: Double = 0
+    /// 녹화 저장이 끝났을 때(새 에셋 localIdentifier, 길이 초). 쇼츠 칸 촬영 화면이 설정한다.
+    var onVideoSaved: ((String, Double) -> Void)?
+    private var recordingTimer: Task<Void, Never>?
+    /// 영상 녹화 해상도(긴 변). 녹화 중에는 프리뷰도 이 해상도로 처리해 같은 프레임을 저장한다.
+    static let recordingDimension: CGFloat = 1920
 
     // MARK: 내부 상태
 
@@ -152,7 +174,8 @@ final class CaptureViewModel: ObservableObject {
         self.services = services
         camera.photoSaver = services.photoSaver
         camera.locationProvider = services.locationProvider
-        camera.frameHandler = Self.makeFrameHandler(camera: camera, pipeline: pipeline, preview: preview)
+        camera.frameHandler = Self.makeFrameHandler(camera: camera, pipeline: pipeline, preview: preview,
+                                                    recorderBox: recorderBox)
         camera.postCaptureHandler = Self.makeSavedHandler(for: self)
         applyFrameRate()
         updateThermalState(deviceStatus.thermalState)   // 설정 반영 포함
@@ -168,9 +191,20 @@ final class CaptureViewModel: ObservableObject {
     /// 비디오 큐에서 실행되는 프레임 콜백. 메인 액터 객체를 캡처하지 않는다.
     nonisolated private static func makeFrameHandler(camera: CameraService,
                                                      pipeline: LivePipeline,
-                                                     preview: MetalPreviewView.Coordinator) -> (CVPixelBuffer, CMTime) -> Void {
-        return { [weak camera, weak pipeline, weak preview] buffer, _ in
+                                                     preview: MetalPreviewView.Coordinator,
+                                                     recorderBox: RecorderBox) -> (CVPixelBuffer, CMTime) -> Void {
+        return { [weak camera, weak pipeline, weak preview] buffer, time in
             guard let camera, let pipeline, let preview else { return }
+            // 녹화 중: 모든 프레임을 보정해 녹화기에 넣고, 프리뷰는 여유가 있을 때만 같은 이미지를 그린다.
+            if let recorder = recorderBox.recorder {
+                let image: CIImage? = autoreleasepool {
+                    pipeline.process(buffer, orientation: camera.frameOrientation)
+                }
+                guard let image else { return }
+                autoreleasepool { recorder.appendVideo(image, time: time) }
+                if preview.beginFrame() { preview.submit(image) }
+                return
+            }
             // 2차 백프레셔: 이전 프레임이 GPU에서 끝나지 않았으면 이 프레임은 버린다.
             guard preview.beginFrame() else { return }
             let image: CIImage? = autoreleasepool {
@@ -217,6 +251,8 @@ final class CaptureViewModel: ObservableObject {
 
     /// 백그라운드로 가거나 다른 탭으로 갈 때. 프레임 처리·그리기 예약을 멈추고 세션을 정지한다.
     func pause() {
+        // 녹화 중에 탭을 떠나거나 백그라운드로 가면 지금까지 찍은 것을 저장하고 멈춘다.
+        if isRecording { Task { await stopRecording() } }
         guard isActive else { return }
         isActive = false
         pipeline.isEnabled = false
@@ -247,14 +283,86 @@ final class CaptureViewModel: ObservableObject {
         }
     }
 
+    // MARK: 영상 녹화 메서드
+
+    /// 영상 모드 진입·이탈: 마이크를 붙이거나 뗀다. 마이크 권한이 없으면 소리 없이 녹화된다.
+    func setVideoMode(_ on: Bool) {
+        isVideoMode = on
+        pushSettings()
+        if on {
+            Task {
+                let mic = await Permissions.requestMicrophone()
+                camera.setAudioEnabled(mic)
+            }
+        } else {
+            if isRecording { Task { await stopRecording() } }
+            camera.setAudioEnabled(false)
+        }
+    }
+
+    func startRecording() {
+        guard !isRecording else { return }
+        do {
+            let recorder = try VideoRecorder(url: VideoRecorder.temporaryURL(), unmirror: camera.isFrontCamera)
+            recorderBox.recorder = recorder
+            camera.audioHandler = { [recorderBox] sample in recorderBox.recorder?.appendAudio(sample) }
+            isRecording = true
+            recordingSeconds = 0
+            pushSettings()   // 녹화 해상도로
+            UIApplication.shared.isIdleTimerDisabled = true
+            recordingTimer = Task { [weak self] in
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .milliseconds(200))
+                    guard let self else { return }
+                    self.recordingSeconds = recorder.duration
+                }
+            }
+        } catch {
+            errorMessage = "녹화를 시작하지 못했습니다: \(UserMessage.text(for: error))"
+        }
+    }
+
+    /// 녹화를 끝내고 사진 보관함에 저장한다. 저장한 에셋 id(실패하면 nil).
+    @discardableResult
+    func stopRecording() async -> String? {
+        guard isRecording, let recorder = recorderBox.recorder else { return nil }
+        recorderBox.recorder = nil
+        camera.audioHandler = nil
+        recordingTimer?.cancel()
+        recordingTimer = nil
+        isRecording = false
+        pushSettings()   // 프리뷰 해상도로 되돌림
+        let duration = recorder.duration
+        guard let url = await recorder.finish() else {
+            errorMessage = "녹화된 영상이 없습니다."
+            return nil
+        }
+        guard let saver = services?.photoSaver else { return nil }
+        do {
+            let id = try await saver.saveVideo(fileURL: url, location: services?.locationProvider.last)
+            camera.lastSavedMessage = "영상을 사진 앱에 저장했습니다."
+            lastCapturedID = id
+            loadThumbnail(localID: id)
+            onVideoSaved?(id, duration)
+            return id
+        } catch {
+            errorMessage = "영상 저장 실패: \(UserMessage.text(for: error))"
+            try? FileManager.default.removeItem(at: url)
+            return nil
+        }
+    }
+
     // MARK: 효과 (R2)
 
     /// 보정 값 + 지금 효과. 라이브·촬영 후처리 모두 이 값을 쓴다.
     var paramsWithEffect: PresetParams {
         var p = params
-        p.effect = effect?.rawValue
+        p.effect = isVideoMode ? nil : effect?.rawValue
         return p
     }
+
+    /// 영상 모드에서는 효과를 쓰지 않는다(보정만).
+    private(set) var isVideoMode = false
 
     func selectEffect(_ kind: EffectKind?) {
         guard kind != effect else { return }
@@ -356,7 +464,7 @@ final class CaptureViewModel: ObservableObject {
                                      context: services.pipelineContext(quality: .live, liveTracker: faceTracker,
                                                                        effectTracker: effectTracker,
                                                                        effectSegmenter: effectSegmenter),
-                                     maxDimension: previewMaxDimension))
+                                     maxDimension: isRecording ? Self.recordingDimension : previewMaxDimension))
     }
 
     // MARK: 포커스·줌·렌즈

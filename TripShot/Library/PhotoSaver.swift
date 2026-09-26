@@ -190,6 +190,28 @@ final class PhotoSaver {
         return identifier
     }
 
+    /// 녹화한 영상 파일을 사진 보관함에 새 에셋으로 저장한다(파일은 옮겨진다). 새 에셋 localIdentifier를 돌려준다.
+    func saveVideo(fileURL: URL, location: CLLocation?) async throws -> String {
+        guard await Permissions.requestPhotoLibrary() else { throw PhotoSaveError.notAuthorized }
+        let created = IdentifierBox()
+        do {
+            try await PHPhotoLibrary.shared().performChanges {
+                let request = PHAssetCreationRequest.forAsset()
+                let options = PHAssetResourceCreationOptions()
+                options.shouldMoveFile = true
+                request.addResource(with: .video, fileURL: fileURL, options: options)
+                if let location { request.location = location }
+                created.value = request.placeholderForCreatedAsset?.localIdentifier
+            }
+        } catch {
+            throw PhotoSaveError.library(error)
+        }
+        guard let identifier = created.value else {
+            throw PhotoSaveError.library(CocoaError(.fileWriteUnknown))
+        }
+        return identifier
+    }
+
     // MARK: 내부 — 공통 렌더 경로
 
     private struct RenderedPhoto {
