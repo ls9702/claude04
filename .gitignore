@@ -12,6 +12,7 @@ build/
 Package.resolved
 # 로컬 전용
 scripts/device.local
+scripts/team.local
 .env.local
 .claude/settings.local.json
 # XcodeGen이 project.yml의 info.properties로 생성 (커밋하지 않음)
