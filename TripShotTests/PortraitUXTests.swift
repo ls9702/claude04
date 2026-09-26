@@ -98,9 +98,12 @@ final class PortraitUXTests: XCTestCase {
         var custom = PortraitParams()
         custom.skinSmooth = 77
         custom.backgroundBlur = 15
-        let out = PortraitStrength.effective(base: PortraitParams(), strength: .strong, custom: custom)
+        var base = PortraitParams()
+        base.backgroundBlur = 40
+        let out = PortraitStrength.effective(base: base, strength: .strong, custom: custom)
         XCTAssertEqual(out.skinSmooth, 77)
-        XCTAssertEqual(out.backgroundBlur, 15)
+        // Background blur is a per-photo value; it comes from base, not from the custom values.
+        XCTAssertEqual(out.backgroundBlur, 40)
     }
 
     func testEffectivePortraitKeepsOriginalDisabled() {
