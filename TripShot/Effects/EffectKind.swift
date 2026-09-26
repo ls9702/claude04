@@ -3,8 +3,8 @@ import CoreGraphics
 import Foundation
 
 /// 효과 템플릿. rawValue는 `PresetParams.effect`에 저장되는 값이라 바꾸지 않는다(없어진 값은 디코딩 시 무시된다).
-/// 목록은 시중 앱(Snapchat·B612·SNOW·Photo Booth 등)의 인기 효과를 조사해 골랐다. 스티커 그림은 Fluent Emoji(MIT, Microsoft)
-/// 벡터를 Mac에서 PNG로 변환해 번들에 넣었다(`Resources/Stickers`, 재생성: `tools/stickers`).
+/// 목록은 시중 앱(Snapchat·B612·SNOW·Photo Booth 등)의 인기 효과를 조사해 골랐다. 스티커는 SceneKit 3D 모델을
+/// 앱에서 렌더한다(`Effects/Sticker3D`, 외부 그림 파일 없음).
 enum EffectKind: String, CaseIterable, Identifiable, Codable {
     // 스티커 16
     case puppyFace, catFace, bunnyEars, bearEars, mouseEars, flowerCrown, crown, heartHalo
@@ -107,31 +107,7 @@ enum EffectKind: String, CaseIterable, Identifiable, Codable {
         }
     }
 
-    /// 타일에 쓸 스티커 그림 이름(`Resources/Stickers/stk_<이름>.png`). 없으면 `icon` 이모지.
-    var tileAsset: String? {
-        switch self {
-        case .puppyFace: return "ears_dog"
-        case .catFace: return "ears_cat"
-        case .bunnyEars: return "ears_rabbit"
-        case .bearEars: return "ears_bear"
-        case .mouseEars: return "ears_mouse"
-        case .flowerCrown: return "cherry_blossom"
-        case .crown: return "crown"
-        case .heartHalo: return "sparkling_heart"
-        case .sunglasses: return "sunglasses"
-        case .nerdGlasses: return "glasses"
-        case .ribbon: return "ribbon"
-        case .topHat: return "top_hat"
-        case .gradCap: return "graduation_cap"
-        case .butterflies: return "butterfly"
-        case .angelHalo: return "halo"
-        case .devilHorns: return "horns"
-        case .snowfall: return "snowflake"
-        default: return nil
-        }
-    }
-
-    /// 타일 아이콘(이모지). 스티커는 `tileAsset` 그림을 우선한다.
+    /// 타일 아이콘(이모지). 스티커 타일은 3D 렌더 썸네일을 우선한다(`StickerRenderer3D.thumbnail`).
     var icon: String {
         switch self {
         case .puppyFace: return "🐶"
@@ -313,6 +289,8 @@ struct FaceAnchors: Equatable {
     var faceCenter: CGPoint
     /// 얼굴 사각형 폭·높이.
     var faceSize: CGSize
+    /// 고개 좌우 회전(라디안, Vision yaw). 3D 스티커 각도 선택에 쓴다. 모르면 0.
+    var yaw: CGFloat = 0
 
     var eyeMid: CGPoint { CGPoint(x: (eyeLeft.x + eyeRight.x) / 2, y: (eyeLeft.y + eyeRight.y) / 2) }
     /// 얼굴 "위" 방향 단위 벡터(기울기 반영).
@@ -377,5 +355,6 @@ struct FaceAnchors: Equatable {
         }
         self.init(eyeLeft: a, eyeRight: b, noseTip: nose, mouthCenter: mouth, mouthOpen: open,
                   faceCenter: CGPoint(x: box.midX, y: box.midY), faceSize: box.size)
+        yaw = CGFloat(face.yaw ?? 0)
     }
 }

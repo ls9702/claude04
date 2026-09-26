@@ -11,6 +11,8 @@ struct EffectInput {
     var personMask: CIImage? = nil
     /// 애니메이션 시간(초). 저장은 0.
     var time: Double = 0
+    /// 저장·앨범(true): 3D 스티커를 그 자리에서 고화질로 렌더. 라이브(false): 캐시만 쓴다.
+    var highQuality: Bool = false
 }
 
 enum EffectRenderer {
@@ -25,7 +27,7 @@ enum EffectRenderer {
         let out: CIImage
         switch kind.category {
         case .sticker:
-            out = stickers(kind, over: image, faces: faces, time: input.time)
+            out = stickers(kind, over: image, faces: faces, time: input.time, highQuality: input.highQuality)
         case .face:
             out = faceEffect(kind, image, faces: faces)
         case .lens:
@@ -85,90 +87,140 @@ enum EffectRenderer {
         return out.cropped(to: extent)
     }
 
-    // MARK: 스티커
+    // MARK: 스티커 (3D 렌더)
 
-    static func stickers(_ kind: EffectKind, over image: CIImage, faces: [FaceAnchors], time: Double) -> CIImage {
+    /// 스티커 전체 크기 배율(실기기 피드백: 얼굴에 비해 크다 → 0.85).
+    static let stickerScale: CGFloat = 0.85
+
+    static func stickers(_ kind: EffectKind, over image: CIImage, faces: [FaceAnchors], time: Double,
+                         highQuality: Bool) -> CIImage {
         var result = image
         for f in faces {
-            for layer in stickerLayers(kind, face: f, time: time) {
-                result = layer.composited(over: result)
-            }
+            let layers = stickerLayers(kind, face: f, time: time, highQuality: highQuality)
+            guard !layers.isEmpty else { continue }
+            var sticker = layers.reduce(CIImage.empty()) { $1.composited(over: $0) }
+            sticker = matchLighting(sticker, to: image, face: f)
+            result = sticker.composited(over: softShadow(of: sticker, face: f).composited(over: result))
         }
         return result
     }
 
-    /// 얼굴 하나에 얹을 스티커 층(아래 → 위 순서). 크기는 두 눈 사이 거리(IOD) 배수, 위치는 눈 중점 기준.
-    static func stickerLayers(_ kind: EffectKind, face f: FaceAnchors, time: Double) -> [CIImage] {
-        let L = StickerLibrary.self
+    /// 부품 하나를 렌더해 얼굴에 맞춰 놓는다. 라이브는 캐시에 없으면 nil(백그라운드 렌더 중).
+    static func placePart(_ part: StickerPart, face f: FaceAnchors, highQuality: Bool,
+                          at point: CGPoint? = nil, sizeFactor: CGFloat = 1, extraAngle: CGFloat = 0,
+                          stretchY: CGFloat = 1) -> CIImage? {
+        let r3 = StickerRenderer3D.shared
+        let yaw = part.anchor == .free ? 0 : StickerRenderer3D.yawStep(for: f.yaw)
+        guard let rendered = highQuality ? r3.renderSync(part, yaw: yaw) : r3.cachedOrSchedule(part, yaw: yaw) else { return nil }
+        let target: CGPoint
+        switch part.anchor {
+        case .eyes: target = f.eyeMid
+        case .nose: target = f.noseTip
+        case .mouth: target = f.mouthCenter
+        case .free: target = point ?? f.eyeMid
+        }
+        let s = f.iod * stickerScale * sizeFactor / rendered.pixelsPerUnit
+        // 기준 랜드마크가 눈 중점이 아니면(코·입) 크기 배율 때문에 위치가 어긋나지 않게, 랜드마크 자체에 맞춘다.
+        let t = CGAffineTransform(translationX: target.x, y: target.y)
+            .rotated(by: f.roll + extraAngle)
+            .scaledBy(x: s, y: s * stretchY)
+            .translatedBy(x: -rendered.anchor.x, y: -rendered.anchor.y)
+        return rendered.image.transformed(by: t)
+    }
+
+    /// 얼굴 하나에 얹을 스티커 층(아래 → 위 순서).
+    static func stickerLayers(_ kind: EffectKind, face f: FaceAnchors, time: Double, highQuality: Bool = false) -> [CIImage] {
+        let parts = StickerModels.parts(for: kind)
         var layers: [CIImage?] = []
         switch kind {
-        case .puppyFace:
-            layers.append(L.dogEars?.placed(at: f.point(fromEyesUp: 1.9), width: f.iod * 3.4, angle: f.roll))
-            if f.mouthOpen > 0.18 {
-                layers.append(L.dogTongue?.placed(at: f.offset(f.mouthCenter, up: 0.05 * f.iod), width: f.iod * 0.5, angle: f.roll))
-            }
-            layers.append(L.dogNose?.placed(at: f.noseTip, width: f.iod * 0.75, angle: f.roll))
-        case .catFace:
-            layers.append(L.catEars?.placed(at: f.point(fromEyesUp: 1.45), width: f.iod * 3.1, angle: f.roll, stretchY: 1.35))
-            layers.append(L.catWhiskers?.placed(at: f.noseTip, width: f.iod * 2.9, angle: f.roll))
-        case .bunnyEars:
-            let wobble = CGFloat(sin(time * 3) * 0.04)
-            layers.append(L.rabbitEars?.placed(at: f.point(fromEyesUp: 1.5), width: f.iod * 2.0, angle: f.roll + wobble, stretchY: 1.8))
-            layers.append(L.rabbitWhiskers?.placed(at: f.noseTip, width: f.iod * 2.6, angle: f.roll))
-        case .bearEars:
-            layers.append(L.bearEars?.placed(at: f.point(fromEyesUp: 1.35), width: f.iod * 3.2, angle: f.roll))
-            layers.append(L.bearMuzzle?.placed(at: f.noseTip, width: f.iod * 1.1, angle: f.roll))
-        case .mouseEars:
-            layers.append(L.mouseEars?.placed(at: f.point(fromEyesUp: 1.35), width: f.iod * 3.4, angle: f.roll))
-            layers.append(L.mouseWhiskers?.placed(at: f.noseTip, width: f.iod * 2.4, angle: f.roll))
-        case .flowerCrown:
-            // 꽃 9송이를 머리 위 호에 벚꽃·히비스커스 번갈아.
-            let n = 9
-            for k in 0..<n {
-                let t = CGFloat(k) / CGFloat(n - 1) - 0.5                 // -0.5 ~ 0.5
-                let p = f.offset(f.point(fromEyesUp: 1.55), up: (0.25 - t * t * 1.2) * f.iod, right: t * 3.4 * f.iod)
-                let art = k % 2 == 0 ? L.cherryBlossom : L.hibiscus
-                let size = f.iod * (k % 2 == 0 ? 0.8 : 0.65)
-                layers.append(art?.placed(at: p, width: size, angle: f.roll + t * 0.8))
-            }
-        case .crown:
-            layers.append(L.crown?.placed(at: f.point(fromEyesUp: 1.7), width: f.iod * 2.3, angle: f.roll))
         case .heartHalo:
-            layers += orbit(f, count: 6, time: time, speed: 1.5, size: 0.6) { k in k % 2 == 0 ? L.redHeart : L.sparklingHeart }
-        case .sunglasses:
-            layers.append(L.sunglasses?.placed(at: f.point(fromEyesUp: 0.02), width: f.iod * 2.5, angle: f.roll))
-        case .nerdGlasses:
-            layers.append(L.glasses?.placed(at: f.point(fromEyesUp: 0.02), width: f.iod * 2.5, angle: f.roll))
-        case .ribbon:
-            layers.append(L.ribbon?.placed(at: f.point(fromEyesUp: 1.75, right: 0.75), width: f.iod * 1.5, angle: f.roll - 0.3))
-        case .topHat:
-            layers.append(L.topHat?.placed(at: f.point(fromEyesUp: 1.65), width: f.iod * 2.4, angle: f.roll))
-        case .gradCap:
-            layers.append(L.gradCap?.placed(at: f.point(fromEyesUp: 1.6), width: f.iod * 2.8, angle: f.roll))
+            if let heart = parts.first {
+                layers += orbit(f, count: 6, time: time, speed: 1.5) { k, p, size, flap in
+                    placePart(heart, face: f, highQuality: highQuality, at: p, sizeFactor: size * 0.55, extraAngle: CGFloat(k % 2) * 0.3 - 0.15)
+                }
+            }
         case .butterflies:
-            layers += orbit(f, count: 3, time: time, speed: 0.9, size: 0.75, flutter: true) { _ in L.butterfly }
+            if let butterfly = parts.first {
+                layers += orbit(f, count: 3, time: time, speed: 0.9) { k, p, size, flap in
+                    placePart(butterfly, face: f, highQuality: highQuality, at: p, sizeFactor: size * 0.6 * flap, stretchY: 1 / flap)
+                }
+            }
+        case .bunnyEars:
+            let wobble = CGFloat(sin(time * 3) * 0.03)
+            for part in parts {
+                layers.append(placePart(part, face: f, highQuality: highQuality, extraAngle: part.anchor == .eyes ? wobble : 0))
+            }
+        case .puppyFace:
+            for part in parts where part.anchor != .mouth || f.mouthOpen > 0.18 {
+                layers.append(placePart(part, face: f, highQuality: highQuality))
+            }
         case .angelHalo:
-            let bob = CGFloat(sin(time * 2) * 0.06)
-            layers.append(L.halo?.placed(at: f.point(fromEyesUp: 2.25 + bob), width: f.iod * 2.0, angle: f.roll))
-        case .devilHorns:
-            layers.append(L.horns?.placed(at: f.point(fromEyesUp: 1.5), width: f.iod * 2.6, angle: f.roll))
+            if let halo = parts.first, let img = placePart(halo, face: f, highQuality: highQuality) {
+                let bob = CGAffineTransform(translationX: f.up.dx * f.iod * 0.05 * CGFloat(sin(time * 2)),
+                                            y: f.up.dy * f.iod * 0.05 * CGFloat(sin(time * 2)))
+                let moved = img.transformed(by: bob)
+                layers.append(glow(moved, radius: f.iod * 0.12))
+            }
         default:
-            break
+            for part in parts { layers.append(placePart(part, face: f, highQuality: highQuality)) }
         }
         return layers.compactMap { $0 }
     }
 
+    /// 발광 번짐: 흐린 사본을 밝게 더한다.
+    static func glow(_ image: CIImage, radius: CGFloat) -> CIImage {
+        let blurred = filter("CIGaussianBlur", image, [kCIInputRadiusKey: radius], clampInput: false)
+        let bright = filter("CIColorMatrix", blurred, ["inputAVector": CIVector(x: 0, y: 0, z: 0, w: 0.8)], clampInput: false)
+        return image.composited(over: bright)
+    }
+
+    /// 스티커 밝기·색을 얼굴 주변 밝기에 맞춘다(어두운 곳에서 스티커만 밝게 떠 보이지 않게).
+    /// 얼굴 영역 평균색(1×1)을 GPU 그래프 안에서 그대로 곱에 쓰므로 CPU 읽기가 없다.
+    static func matchLighting(_ sticker: CIImage, to image: CIImage, face f: FaceAnchors) -> CIImage {
+        let box = CGRect(x: f.faceCenter.x - f.faceSize.width / 2, y: f.faceCenter.y - f.faceSize.height / 2,
+                         width: f.faceSize.width, height: f.faceSize.height).intersection(image.extent)
+        guard !box.isNull, !box.isEmpty,
+              let average = CIFilter(name: "CIAreaAverage", parameters: [kCIInputImageKey: image,
+                                                                         kCIInputExtentKey: CIVector(cgRect: box)])?.outputImage
+        else { return sticker }
+        // 평균색 → (밝기 비율 0.55~1.1)의 회색 + 색 10% → 스티커에 곱한다.
+        let factor = filter("CIColorMatrix", average.clampedToExtent(), [
+            "inputRVector": CIVector(x: 0.3 * 1.6 + 0.1, y: 0.59 * 1.6, z: 0.11 * 1.6, w: 0),
+            "inputGVector": CIVector(x: 0.3 * 1.6, y: 0.59 * 1.6 + 0.1, z: 0.11 * 1.6, w: 0),
+            "inputBVector": CIVector(x: 0.3 * 1.6, y: 0.59 * 1.6, z: 0.11 * 1.6 + 0.1, w: 0),
+            "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 0),
+            "inputBiasVector": CIVector(x: 0, y: 0, z: 0, w: 1),
+        ], clampInput: false)
+        let clamped = filter("CIColorClamp", factor, ["inputMinComponents": CIVector(x: 0.55, y: 0.55, z: 0.55, w: 1),
+                                                      "inputMaxComponents": CIVector(x: 1.1, y: 1.1, z: 1.1, w: 1)],
+                             clampInput: false)
+        return filter("CIMultiplyCompositing", sticker, [kCIInputBackgroundImageKey: clamped], clampInput: false)
+            .cropped(to: sticker.extent)
+    }
+
+    /// 스티커 아래 부드러운 그림자(얼굴 아래쪽으로 조금 밀림, 30%).
+    static func softShadow(of sticker: CIImage, face f: FaceAnchors) -> CIImage {
+        guard !sticker.extent.isEmpty, !sticker.extent.isInfinite else { return CIImage.empty() }
+        let black = filter("CIColorMatrix", sticker, [
+            "inputRVector": CIVector(x: 0, y: 0, z: 0, w: 0), "inputGVector": CIVector(x: 0, y: 0, z: 0, w: 0),
+            "inputBVector": CIVector(x: 0, y: 0, z: 0, w: 0), "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 0.3),
+        ], clampInput: false)
+        let blurred = filter("CIGaussianBlur", black, [kCIInputRadiusKey: f.iod * 0.06], clampInput: false)
+        let offset = CGAffineTransform(translationX: -f.up.dx * f.iod * 0.05, y: -f.up.dy * f.iod * 0.05)
+        return blurred.transformed(by: offset)
+    }
+
     /// 머리 주위를 도는 스티커들(하트·나비). 뒤쪽(타원 위쪽 반)은 작게 그려 깊이감을 준다.
-    static func orbit(_ f: FaceAnchors, count: Int, time: Double, speed: Double, size: CGFloat, flutter: Bool = false,
-                      art: (Int) -> StickerArt?) -> [CIImage?] {
-        let center = f.point(fromEyesUp: 1.9)
+    /// `make(번호, 위치, 크기 배율, 날갯짓 배율)`.
+    static func orbit(_ f: FaceAnchors, count: Int, time: Double, speed: Double,
+                      make: (Int, CGPoint, CGFloat, CGFloat) -> CIImage?) -> [CIImage?] {
+        let center = f.point(fromEyesUp: 1.7)
         return (0..<count).map { k in
             let a = time * speed + Double(k) * 2 * .pi / Double(count)
             let depth = CGFloat((sin(a) + 2) / 3)
-            let p = f.offset(center, up: CGFloat(sin(a)) * 0.45 * f.iod, right: CGFloat(cos(a)) * 2.0 * f.iod)
-            let flap: CGFloat = flutter ? CGFloat(0.75 + 0.25 * sin(time * 12 + Double(k))) : 1
-            return art(k)?.placed(at: p, width: f.iod * size * depth * flap, angle: f.roll,
-                                  stretchY: flutter ? 1 / flap : 1)
+            let p = f.offset(center, up: CGFloat(sin(a)) * 0.4 * f.iod, right: CGFloat(cos(a)) * 1.7 * f.iod)
+            let flap = CGFloat(0.75 + 0.25 * sin(time * 12 + Double(k)))
+            return make(k, p, depth, flap)
         }
     }
 
@@ -275,26 +327,28 @@ enum EffectRenderer {
         return blend(image, over: gray, mask: mask)
     }
 
-    /// 눈송이가 위에서 아래로 내린다. 위치는 번호로 정해지는 의사 난수라 같은 시간이면 같은 그림(저장은 시간 0).
+    /// 눈송이가 위에서 아래로 내린다(부드러운 흰 빛망울). 위치는 번호로 정해지는 의사 난수라 같은 시간이면 같은 그림(저장은 시간 0).
     static func snowfall(_ image: CIImage, time: Double) -> CIImage {
-        guard let flake = StickerLibrary.snowflake else { return image }
         let e = image.extent
         func rand(_ k: Int, _ salt: Double) -> Double {
             let x = sin(Double(k) * 12.9898 + salt * 78.233) * 43758.5453
             return x - x.rounded(.down)
         }
-        var result = image
-        for k in 0..<36 {
-            let size = e.width * CGFloat(0.03 + 0.05 * rand(k, 1))
-            let speed = 0.06 + 0.1 * rand(k, 2)                      // 화면 높이/초
+        var flakes = CIImage.empty()
+        for k in 0..<48 {
+            let size = e.width * CGFloat(0.008 + 0.022 * rand(k, 1))
+            let speed = 0.06 + 0.1 * rand(k, 2)
             let phase = rand(k, 3) + time * speed
             let y = e.maxY + size - CGFloat(phase - phase.rounded(.down)) * (e.height + 2 * size)
-            let x = e.minX + CGFloat(rand(k, 4)) * e.width + CGFloat(sin(time * 1.3 + Double(k))) * size * 0.5
-            let art = flake.placed(at: CGPoint(x: x, y: y), width: size, angle: CGFloat(time * 0.8 + Double(k)))
-            result = filter("CIColorMatrix", art, ["inputAVector": CIVector(x: 0, y: 0, z: 0, w: 0.85)])
-                .composited(over: result)
+            let x = e.minX + CGFloat(rand(k, 4)) * e.width + CGFloat(sin(time * 1.3 + Double(k))) * size
+            let alpha = 0.55 + 0.4 * rand(k, 5)
+            guard let flake = CIFilter(name: "CIRadialGradient", parameters: [
+                kCIInputCenterKey: CIVector(x: x, y: y), "inputRadius0": size * 0.35, "inputRadius1": size,
+                "inputColor0": CIColor(red: 1, green: 1, blue: 1, alpha: alpha), "inputColor1": CIColor(red: 1, green: 1, blue: 1, alpha: 0),
+            ])?.outputImage?.cropped(to: CGRect(x: x - size, y: y - size, width: 2 * size, height: 2 * size)) else { continue }
+            flakes = flake.composited(over: flakes)
         }
-        return result
+        return flakes.composited(over: image)
     }
 
     // MARK: 렌즈 추가 10종
@@ -584,7 +638,7 @@ enum EffectStage {
     /// 저장·앨범용: 호출마다 얼굴 검출(필요할 때만)·정밀 사람 분리.
     static func full(detector: FaceDetector) -> (CIImage, EffectKind) -> CIImage {
         return { image, kind in
-            var input = EffectInput()
+            var input = EffectInput(highQuality: true)
             if kind.usesFaces {
                 // 단체 사진: 작은 얼굴까지 잡도록 검출 해상도를 높이고 최소 크기를 낮춘다.
                 input.faces = detector.detect(in: image, maxFaces: EffectKind.maxFaces, detectionMaxDimension: 1600,

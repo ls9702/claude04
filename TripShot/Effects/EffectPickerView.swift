@@ -1,95 +1,100 @@
-// 효과 선택 시트(R2): 40종 템플릿을 분류(스티커·얼굴·렌즈·스타일)별 격자로 보여 주고, 탭하면 바로 라이브 프리뷰에 적용된다.
+// 효과 선택 띠(R2): 셔터 위에 낮게 붙는 가로 스크롤 — 분류 버튼(스티커·얼굴·렌즈·스타일) + 타일 한 줄.
+// 프리뷰를 가리지 않아 효과를 넘겨 보며 바로 확인할 수 있다.
 import SwiftUI
 import UIKit
 
-struct EffectPickerView: View {
+struct EffectPickerStrip: View {
     let selection: EffectKind?
     let onSelect: (EffectKind?) -> Void
+    let onClose: () -> Void
 
     @State private var category: EffectKind.Category = .sticker
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 5)
+    @State private var thumbnails: [EffectKind: UIImage] = [:]
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 10) {
-                Picker("분류", selection: $category) {
-                    ForEach(EffectKind.Category.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+        VStack(spacing: 8) {
+            HStack(spacing: 6) {
+                ForEach(EffectKind.Category.allCases, id: \.self) { c in
+                    Button { category = c } label: {
+                        Text(c.rawValue)
+                            .font(.caption.weight(category == c ? .semibold : .regular))
+                            .foregroundStyle(category == c ? Color.black : Color.white)
+                            .padding(.horizontal, 10).padding(.vertical, 5)
+                            .background(Capsule().fill(category == c ? Color.yellow : Color.white.opacity(0.15)))
+                    }
+                    .buttonStyle(.plain)
                 }
-                .pickerStyle(.segmented)
-                .padding(.horizontal, 16)
+                Spacer(minLength: 0)
+                Button(action: onClose) {
+                    Image(systemName: "chevron.down.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(.white.opacity(0.85))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("효과 닫기")
+            }
+            .padding(.horizontal, 16)
 
-                ScrollView {
-                    LazyVGrid(columns: columns, spacing: 12) {
-                        noneTile
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        tile(id: "none", title: "없음", isOn: selection == nil) {
+                            Image(systemName: "nosign").font(.title3).foregroundStyle(.white.opacity(0.8))
+                        } action: { onSelect(nil) }
                         ForEach(EffectKind.allCases.filter { $0.category == category }) { kind in
-                            tile(kind)
+                            tile(id: kind.rawValue, title: kind.title, isOn: selection == kind) {
+                                if let image = thumbnails[kind] {
+                                    Image(uiImage: image).resizable().scaledToFit().padding(4)
+                                } else {
+                                    Text(kind.icon).font(.system(size: 26))
+                                }
+                            } action: { onSelect(kind) }
                         }
                     }
                     .padding(.horizontal, 16)
-
+                }
+                .onAppear {
                     if let selection {
-                        Text("\(selection.title) — \(selection.summary)")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .padding(12)
+                        category = selection.category
+                        proxy.scrollTo(selection.rawValue, anchor: .center)
                     }
                 }
             }
-            .padding(.top, 8)
-            .navigationTitle("효과")
-            .navigationBarTitleDisplayMode(.inline)
-            .onAppear { if let selection { category = selection.category } }
         }
+        .padding(.vertical, 8)
+        .background(Color.black.opacity(0.35), in: RoundedRectangle(cornerRadius: 18))
+        .padding(.horizontal, 8)
+        .task(id: category) { await loadThumbnails() }
     }
 
-    private var noneTile: some View {
-        Button { onSelect(nil) } label: {
-            tileBody(isOn: selection == nil, title: "없음") {
-                Image(systemName: "nosign").font(.title2).foregroundStyle(.secondary)
+    private func tile<Content: View>(id: String, title: String, isOn: Bool, @ViewBuilder content: () -> Content,
+                                     action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 3) {
+                content()
+                    .frame(width: 52, height: 52)
+                    .background(Circle().fill(Color.white.opacity(isOn ? 0.3 : 0.12)))
+                    .overlay(Circle().stroke(isOn ? Color.yellow : .clear, lineWidth: 2.5))
+                Text(title)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .frame(width: 58)
             }
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("효과 없음")
+        .id(id)
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(isOn ? .isSelected : [])
     }
 
-    private func tile(_ kind: EffectKind) -> some View {
-        Button { onSelect(kind) } label: {
-            tileBody(isOn: selection == kind, title: kind.title) {
-                if let name = kind.tileAsset, let image = Self.thumbnail(name) {
-                    Image(uiImage: image).resizable().scaledToFit().padding(7)
-                } else {
-                    Text(kind.icon).font(.system(size: 28))
-                }
-            }
+    /// 스티커 타일: 3D 렌더 썸네일을 백그라운드에서 만든다(처음 한 번, 캐시됨).
+    private func loadThumbnails() async {
+        guard category == .sticker else { return }
+        for kind in EffectKind.allCases where kind.category == .sticker && thumbnails[kind] == nil {
+            let image = await Task.detached(priority: .utility) { StickerRenderer3D.shared.thumbnail(kind) }.value
+            if Task.isCancelled { return }
+            if let image { thumbnails[kind] = image }
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel(kind.title)
-        .accessibilityHint(kind.summary)
-        .accessibilityAddTraits(selection == kind ? .isSelected : [])
-    }
-
-    private func tileBody<Content: View>(isOn: Bool, title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(spacing: 4) {
-            content()
-                .frame(width: 56, height: 56)
-                .background(RoundedRectangle(cornerRadius: 14).fill(Color.secondary.opacity(isOn ? 0.35 : 0.12)))
-                .overlay(RoundedRectangle(cornerRadius: 14).stroke(isOn ? Color.yellow : .clear, lineWidth: 2.5))
-            Text(title)
-                .font(.caption2)
-                .lineLimit(1)
-                .minimumScaleFactor(0.75)
-        }
-    }
-
-    /// 타일용 스티커 그림(번들 PNG). 한 번 읽은 것은 캐시한다.
-    private static var cache: [String: UIImage] = [:]
-    private static func thumbnail(_ name: String) -> UIImage? {
-        if let hit = cache[name] { return hit }
-        let file = "stk_" + name
-        guard let url = Bundle.main.url(forResource: file, withExtension: "png")
-                ?? Bundle.main.url(forResource: file, withExtension: "png", subdirectory: "Stickers"),
-              let image = UIImage(contentsOfFile: url.path) else { return nil }
-        cache[name] = image
-        return image
     }
 }

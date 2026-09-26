@@ -260,6 +260,8 @@ final class CaptureViewModel: ObservableObject {
         guard kind != effect else { return }
         effect = kind
         effectTracker.reset()
+        // 3D 스티커는 고르자마자 모든 고개 각도를 백그라운드에서 미리 렌더한다.
+        if let kind { StickerRenderer3D.shared.prewarm(kind) }
         pushSettings()
     }
 

@@ -11,6 +11,16 @@
 
 ---
 
+## 2026-09-26 23:30 · 커밋 84484dc → (이번 커밋) · build.sh | test.sh | install-device.sh · R2-S2 3D 스티커·60종·선택 띠
+결과: **성공** (build 오류 0 · test **232/232**, skip 1 = 개발용 미리보기). 실기기 설치 완료
+사용자 실기기 관찰(40종 버전): 동작 OK, 렌즈 만족. 스티커가 얼굴에 비해 큼, 그림이 싸 보임(PPT 느낌), 효과 시트가 프리뷰를 가림
+수정:
+- 스티커: `Effects/Sticker3D`(StickerModels 16종 + StickerRenderer3D: SCNRenderer 오프스크린 스냅샷, 고개 5단계 캐시, 저장은 1400px 즉석 렌더), 크기 0.85배, 얼굴 평균 밝기 곱(CIAreaAverage를 그래프 안에서) + 부드러운 그림자. Fluent PNG·tools/stickers 삭제
+- 발견: `UIBezierPath(roundedRect:cornerRadius:)`는 반경 ≥ 짧은 변/3이면 다른 곡선 경로를 만들고 **SCNShape가 이를 빈 도형으로 만든다** → 원호로 직접 그린 `StickerShapes.roundedRect` 사용
+- 발견: `CIDroste`는 clampedToExtent(무한) 입력이면 출력 nil → 원본 크기 입력
+- 선택 UI: 시트 → 셔터 위 가로 스크롤 띠(`EffectPickerStrip`), 스티커 타일은 3D 썸네일
+실기기 확인할 것: 3D 스티커 첫 표시 지연(고르면 5각도 백그라운드 렌더), 고개 돌릴 때 각도 방향(`StickerRenderer3D.yawStep` 부호 TODO), 스티커 크기·위치, 라이브 fps·메모리, 저장본 스티커 화질
+
 ## 2026-09-26 21:00 · 커밋 e0726d4 → (이번 커밋) · build.sh | test.sh | install-device.sh · R2-S1 효과 40종·Fluent 그림·여러 명
 결과: **성공** (build 오류 0 · test **231/231**, skip 1 = 개발용 스티커 미리보기 `EffectPreviewTests`(`TEST_RUNNER_EFFECT_PREVIEW_DIR` 줄 때만)). 실기기 설치 완료
 사용자 실기기 관찰(20종 버전): 효과 동작 정상. 스티커 그림이 싸 보임, 두 명 이상일 때 일부 얼굴에 적용 안 됨

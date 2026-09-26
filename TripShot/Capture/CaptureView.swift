@@ -353,10 +353,18 @@ struct CaptureView: View {
 
     private var bottomControls: some View {
         VStack(spacing: 14) {
-            lensButtons
+            if showEffects && mode == .photo {
+                // 효과 띠가 열려 있으면 렌즈·보정 메뉴 대신 띠만(프리뷰를 가리지 않게 낮게).
+                EffectPickerStrip(selection: vm.effect,
+                                  onSelect: { vm.selectEffect($0) },
+                                  onClose: { withAnimation(.easeInOut(duration: 0.2)) { showEffects = false } })
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            } else {
+                lensButtons
 
-            if mode == .photo {
-                lookMenus
+                if mode == .photo {
+                    lookMenus
+                }
             }
 
             HStack {
@@ -533,7 +541,7 @@ struct CaptureView: View {
     private var portraitControl: some View {
         VStack(spacing: 4) {
             Button {
-                showEffects = true
+                withAnimation(.easeInOut(duration: 0.2)) { showEffects.toggle() }
             } label: {
                 Group {
                     if let effect = vm.effect {
@@ -550,13 +558,6 @@ struct CaptureView: View {
             .overlay(alignment: .topTrailing) { processingBadge }
             .accessibilityLabel("효과")
             .accessibilityValue(vm.effect?.title ?? "없음")
-            .sheet(isPresented: $showEffects) {
-                EffectPickerView(selection: vm.effect) { kind in
-                    vm.selectEffect(kind)
-                }
-                .presentationDetents([.fraction(0.45), .large])
-                .presentationBackgroundInteraction(.enabled(upThrough: .fraction(0.45)))
-            }
 
             // 인물 보정 중인 얼굴 수(PLAN §3.3 "지금 인물 보정 중" 표시). 자리를 유지해 버튼이 흔들리지 않게 한다.
             Text(faceCountText)

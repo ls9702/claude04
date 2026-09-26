@@ -71,25 +71,40 @@ final class EffectTests: XCTestCase {
         XCTAssertEqual(counts[.style], 16)
     }
 
-    func testStickerAssetsLoad() {
-        let L = StickerLibrary.self
-        let all: [(String, StickerArt?)] = [
-            ("dogEars", L.dogEars), ("dogNose", L.dogNose), ("dogTongue", L.dogTongue), ("catEars", L.catEars),
-            ("catWhiskers", L.catWhiskers), ("rabbitEars", L.rabbitEars), ("rabbitWhiskers", L.rabbitWhiskers),
-            ("bearEars", L.bearEars), ("bearMuzzle", L.bearMuzzle), ("mouseEars", L.mouseEars),
-            ("mouseWhiskers", L.mouseWhiskers), ("crown", L.crown), ("cherryBlossom", L.cherryBlossom),
-            ("hibiscus", L.hibiscus), ("redHeart", L.redHeart), ("sparklingHeart", L.sparklingHeart),
-            ("sunglasses", L.sunglasses), ("glasses", L.glasses), ("ribbon", L.ribbon), ("topHat", L.topHat),
-            ("gradCap", L.gradCap), ("butterfly", L.butterfly), ("halo", L.halo), ("horns", L.horns),
-            ("snowflake", L.snowflake),
-        ]
-        for (name, art) in all {
-            XCTAssertNotNil(art, "\(name) 그림 없음(Resources/Stickers)")
-            XCTAssertGreaterThan(art?.width ?? 0, 100, name)
+    /// 스티커 부품이 모두 3D로 렌더되고(불투명 픽셀이 충분), 기준점이 이미지 안에 있다.
+    func testStickerPartsRender3D() throws {
+        let ctx = CIContext()
+        for kind in EffectKind.allCases where kind.category == .sticker {
+            let parts = StickerModels.parts(for: kind)
+            XCTAssertFalse(parts.isEmpty, "\(kind) 부품 없음")
+            for part in parts {
+                let r = try XCTUnwrap(StickerRenderer3D.shared.renderSync(part, yaw: 0, size: 256), "\(part.id) 렌더 실패")
+                XCTAssertTrue(r.image.extent.insetBy(dx: -1, dy: -1).contains(r.anchor) || part.anchor != .free, part.id)
+                // 불투명 픽셀 비율
+                let e = r.image.extent
+                let w = Int(e.width), h = Int(e.height)
+                var bytes = [UInt8](repeating: 0, count: w * h * 4)
+                bytes.withUnsafeMutableBytes { ptr in
+                    ctx.render(r.image, toBitmap: ptr.baseAddress!, rowBytes: w * 4, bounds: e, format: .RGBA8, colorSpace: nil)
+                }
+                var opaque = 0
+                for i in stride(from: 3, to: bytes.count, by: 4) where bytes[i] > 128 { opaque += 1 }
+                let fraction = Double(opaque) / Double(w * h)
+                XCTAssertGreaterThan(fraction, 0.01, "\(part.id) 거의 비어 있음 (\(fraction))")
+                XCTAssertLessThan(fraction, 0.9, "\(part.id) 배경이 투명하지 않음 (\(fraction))")
+            }
         }
-        for kind in EffectKind.allCases {
-            if let asset = kind.tileAsset { XCTAssertNotNil(StickerArt.asset(asset), "\(kind) 타일 그림") }
-        }
+    }
+
+    func testYawStepAndAnchorShift() throws {
+        XCTAssertEqual(StickerRenderer3D.yawStep(for: 0), 0)
+        XCTAssertEqual(StickerRenderer3D.yawStep(for: 0.3), 15)
+        XCTAssertEqual(StickerRenderer3D.yawStep(for: -1.0), -30)
+        // 고개를 돌리면 눈 중점(기준점)이 렌더 이미지에서 옆으로 움직인다(머리 중심을 축으로 회전).
+        let part = StickerModels.crown
+        let front = try XCTUnwrap(StickerRenderer3D.shared.renderSync(part, yaw: 0, size: 200))
+        let turned = try XCTUnwrap(StickerRenderer3D.shared.renderSync(part, yaw: 30, size: 200))
+        XCTAssertNotEqual(front.anchor.x, turned.anchor.x, accuracy: 1)
     }
 
     /// 세 명이 있으면 스티커·얼굴 변형이 세 얼굴 모두에 적용된다(각 얼굴 주변 픽셀이 바뀐다).
@@ -109,7 +124,7 @@ final class EffectTests: XCTestCase {
             return Double(changed) / Double(max(total, 1))
         }
         for kind in [EffectKind.crown, .sunglasses, .puppyFace, .bigEyes, .balloonFace] {
-            let out = pixels(EffectRenderer.apply(kind, to: input, input: EffectInput(faces: faces)))
+            let out = pixels(EffectRenderer.apply(kind, to: input, input: EffectInput(faces: faces, highQuality: true)))
             for f in faces {
                 let probe = kind == .crown ? f.point(fromEyesUp: 2.2) : f.eyeMid
                 XCTAssertGreaterThan(changedNear(out, probe, 20), 0.05, "\(kind): (\(f.eyeMid.x), \(f.eyeMid.y)) 얼굴")
@@ -178,7 +193,7 @@ final class EffectTests: XCTestCase {
         let faces = [face(), face(x: 120, y: 180, iod: 45, roll: 0.2)]
         for kind in EffectKind.allCases {
             let out = EffectRenderer.apply(kind, to: input,
-                                           input: EffectInput(faces: faces, personMask: personMask(), time: 0.7))
+                                           input: EffectInput(faces: faces, personMask: personMask(), time: 0.7, highQuality: true))
             XCTAssertEqual(out.extent, input.extent, "\(kind) 크기 유지")
             let fraction = changedFraction(base, pixels(out))
             XCTAssertGreaterThan(fraction, 0.003, "\(kind)가 픽셀을 바꿔야 한다 (\(fraction))")
