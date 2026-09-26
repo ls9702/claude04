@@ -80,6 +80,27 @@ final class EnhanceViewModelTests: XCTestCase {
     }
 
     @MainActor
+    func testClearSelectionReturnsToInitialState() {
+        let vm = EnhanceViewModel()
+        vm.setItems(items(["a", "b"]))
+        XCTAssertFalse(vm.hasAdjustments)
+        vm.applyPreset(params(exposure: 15), choice: .auto)
+        XCTAssertTrue(vm.hasAdjustments)
+
+        vm.clearSelection()
+        XCTAssertTrue(vm.items.isEmpty, "초기 화면(사진 선택 전)")
+        XCTAssertTrue(vm.paramsByID.isEmpty)
+        XCTAssertTrue(vm.choiceByID.isEmpty)
+        XCTAssertFalse(vm.hasAdjustments)
+        XCTAssertNil(vm.currentItem)
+        XCTAssertNil(vm.previewImage)
+
+        // 같은 사진을 다시 골라도 이전 조정값이 남아 있지 않다.
+        vm.setItems(items(["a"]))
+        XCTAssertEqual(vm.params(for: "a"), PresetParams())
+    }
+
+    @MainActor
     func testApplyPresetOnlyAffectsCurrentPhoto() {
         let vm = EnhanceViewModel()
         vm.setItems(items(["a", "b"]))
