@@ -256,7 +256,7 @@ struct FaceSmoother {
 ///
 /// 스레드 규칙:
 /// - `faces(in:)`는 **카메라 비디오 큐(직렬)에서만** 부른다. 평활 상태는 그 큐 전용(잠금 없음).
-/// - `faceCount`·`reset()`은 어느 스레드에서나(보통 메인) 부른다. 잠금으로 보호되는 값만 만진다.
+/// - `faceCount`·`lastFaceRects`·`reset()`은 어느 스레드에서나(보통 메인) 부른다. 잠금으로 보호되는 값만 만진다.
 final class SmoothedFaceTracker: @unchecked Sendable {
     static let defaultInterval = 3
     /// 라이브 검출 해상도. 프리뷰(≤1024)를 한 번 더 줄여 Vision 비용을 낮춘다.
@@ -278,6 +278,10 @@ final class SmoothedFaceTracker: @unchecked Sendable {
     // 잠금 보호
     private let lock = NSLock()
     private var sharedCount = 0
+    /// 마지막 프레임의 얼굴 사각형(프리뷰 이미지 정규화 좌표 0~1, 원점 좌하단). 화면 마커용(R1-S8b).
+    private var sharedRects: [CGRect] = []
+    /// 마지막 프레임의 이미지 크기(마커를 뷰 좌표로 옮길 때 aspect-fill 계산용).
+    private var sharedImageSize: CGSize = .zero
     private var lastUpdate: TimeInterval = 0
     private var resetRequested = false
 
@@ -310,9 +314,13 @@ final class SmoothedFaceTracker: @unchecked Sendable {
         frameIndex &+= 1
 
         let count = current.count
+        let rects = Self.normalizedRects(current, in: image.extent)
+        let size = image.extent.size
         let now = ProcessInfo.processInfo.systemUptime
         lock.withLock {
             sharedCount = count
+            sharedRects = rects
+            sharedImageSize = size
             lastUpdate = now
         }
         return current
@@ -324,11 +332,34 @@ final class SmoothedFaceTracker: @unchecked Sendable {
         return lock.withLock { now - lastUpdate < Self.countStaleSeconds ? sharedCount : 0 }
     }
 
+    /// 화면 마커용 얼굴 사각형(정규화, 원점 좌하단)과 이미지 크기, 마지막 갱신 시각(`systemUptime`).
+    /// 최근 1초 안에 갱신되지 않았으면 빈 배열(인물 단계가 호출되지 않는 상태·원본 보기 중).
+    var lastFaceRects: (rects: [CGRect], imageSize: CGSize, lastUpdate: TimeInterval) {
+        let now = ProcessInfo.processInfo.systemUptime
+        return lock.withLock {
+            let fresh = now - lastUpdate < Self.countStaleSeconds
+            return (fresh ? sharedRects : [], sharedImageSize, lastUpdate)
+        }
+    }
+
+    /// 얼굴 boundingBox(이미지 픽셀, extent 기준) → 이미지 정규화 좌표(0~1, 원점 좌하단). 순수 함수.
+    static func normalizedRects(_ faces: [DetectedFace], in extent: CGRect) -> [CGRect] {
+        guard !extent.isInfinite, extent.width > 0, extent.height > 0 else { return [] }
+        return faces.map { f in
+            let b = f.boundingBox
+            return CGRect(x: (b.minX - extent.minX) / extent.width,
+                          y: (b.minY - extent.minY) / extent.height,
+                          width: b.width / extent.width,
+                          height: b.height / extent.height)
+        }
+    }
+
     /// 추적 상태를 비운다(인물 모드 끔 등). 실제 초기화는 다음 프레임에 비디오 큐에서 한다.
     func reset() {
         lock.withLock {
             resetRequested = true
             sharedCount = 0
+            sharedRects = []
             lastUpdate = 0
         }
     }

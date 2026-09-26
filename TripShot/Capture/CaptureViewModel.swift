@@ -1,4 +1,4 @@
-// 촬영 탭 상태와 연결: 카메라 프레임 → 라이브 보정 → Metal 프리뷰, 프리셋·인물 모드·열 상태 반영, 촬영 후 풀해상도 후처리 대기열.
+// 촬영 탭 상태와 연결: 카메라 프레임 → 라이브 보정 → Metal 프리뷰, 프리셋·인물 모드(강도 칩·얼굴 마커·원본 보기·셀피 제안)·열 상태 반영, 촬영 후 풀해상도 후처리 대기열.
 import AVFoundation
 import Combine
 import CoreImage
@@ -46,6 +46,14 @@ final class CaptureViewModel: ObservableObject {
     @Published private(set) var stats: String = ""
     /// 라이브 프리뷰에서 인물 보정 중인 얼굴 수(0이면 표시 없음). 1초마다 트래커에서 읽는다.
     @Published private(set) var detectedFaceCount = 0
+    /// 라이브 얼굴 마커(프리뷰 이미지 정규화 좌표 0~1, 원점 좌하단). 0.25초마다 트래커에서 읽는다. 뷰 좌표 변환은 뷰에서.
+    @Published private(set) var faceMarkers: [CGRect] = []
+    /// 마커를 계산한 프리뷰 이미지 크기(aspect-fill 배치용). 0이면 3:4로 본다.
+    @Published private(set) var faceMarkerImageSize: CGSize = .zero
+    /// 원본 보기(프리뷰 길게 누르기) 중인지.
+    @Published private(set) var isBypassed = false
+    /// 전면 카메라 전환 시 인물 모드 켜기 제안(한 번만).
+    @Published var showPortraitSuggestion = false
 
     // MARK: 내부 상태
 
@@ -62,6 +70,17 @@ final class CaptureViewModel: ObservableObject {
     private var workerBusy = false
     private var thumbnailTask: Task<Void, Never>?
     private var statsTask: Task<Void, Never>?
+    private var markerTask: Task<Void, Never>?
+    /// 원본 보기를 끝낸 시각(`systemUptime`). 길게 누르기를 뗀 직후 UIKit 탭이 포커스로 들어오지 않게 한다.
+    private var bypassEndedAt: TimeInterval = 0
+    /// 직전 카메라 방향(전면 전환 감지용).
+    private var wasFrontCamera = false
+    private let defaults: UserDefaults
+    static let portraitSuggestionKey = "portraitSuggestionShown"
+    /// 원본 보기를 뗀 뒤 이 시간 안의 탭은 무시한다.
+    static let tapSuppressionAfterBypass: TimeInterval = 0.35
+    /// 얼굴 마커 갱신 간격.
+    static let markerInterval: Duration = .milliseconds(250)
     private var cancellables: Set<AnyCancellable> = []
 
     /// 셔터 순간의 보정 설정.
@@ -77,7 +96,8 @@ final class CaptureViewModel: ObservableObject {
         let context: PipelineContext
     }
 
-    init() {
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
         // CameraService의 메시지(@Published, 메인에서 변경)를 이 객체의 변경으로 전달해 화면이 갱신되게 한다.
         camera.objectWillChange
             .sink { [weak self] _ in self?.objectWillChange.send() }
@@ -154,6 +174,7 @@ final class CaptureViewModel: ObservableObject {
         preview.setActive(true)
         camera.start()
         startStats()
+        startMarkers()
     }
 
     /// 백그라운드로 가거나 다른 탭으로 갈 때. 프레임 처리·그리기 예약을 멈추고 세션을 정지한다.
@@ -165,7 +186,11 @@ final class CaptureViewModel: ObservableObject {
         camera.stop()
         statsTask?.cancel()
         statsTask = nil
+        markerTask?.cancel()
+        markerTask = nil
         detectedFaceCount = 0
+        faceMarkers = []
+        setBypass(false)
     }
 
     // MARK: 프리셋·인물 모드·열 상태
@@ -197,13 +222,37 @@ final class CaptureViewModel: ObservableObject {
         if services?.portraitModeEnabled != true {
             faceTracker.reset()
             detectedFaceCount = 0
+            faceMarkers = []
         }
         pushSettings()
     }
 
+    // MARK: 인물 강도
+
+    /// 강도 칩 표시: 현재 인물 값과 정확히 같은 단계. nil이면 "직접".
+    var portraitStrengthSelection: PortraitStrength? { PortraitStrength.matching(params.portrait) }
+
+    /// 강도 칩 선택: 앱 상태(앨범과 공유)에 저장하고 현재 params의 `portrait`만 교체한다(프리셋의 다른 값 유지).
+    func selectPortraitStrength(_ strength: PortraitStrength) {
+        services?.selectPortraitStrength(strength)
+        refreshPortrait()
+    }
+
+    /// 앱의 강도·직접 값이 바뀌었을 때(앨범 화면에서 바꾼 경우 포함) 현재 params의 인물 값을 다시 계산한다.
+    func refreshPortrait() {
+        guard let services else { return }
+        let portrait = services.effectivePortrait(base: params.portrait)
+        guard portrait != params.portrait else { return }
+        params.portrait = portrait
+        pushSettings()
+    }
+
+    /// 프리셋 선택·동기화: 프리셋의 portrait 위에 칩·직접 값을 덮어쓴다(`AppServices.effectivePortrait`).
     private func apply(choice: PresetChoice, params: PresetParams) {
+        var p = params
+        if let services { p.portrait = services.effectivePortrait(base: p.portrait) }
         self.choice = choice
-        self.params = params
+        self.params = p
         pushSettings()
     }
 
@@ -224,8 +273,23 @@ final class CaptureViewModel: ObservableObject {
 
     // MARK: 포커스·줌·렌즈
 
-    func focus(at devicePoint: CGPoint) {
+    /// 탭 포커스. 원본 보기 중이거나 방금 끝났으면(길게 누르기를 뗀 탭) 무시하고 false.
+    @discardableResult
+    func focus(at devicePoint: CGPoint) -> Bool {
+        let now = ProcessInfo.processInfo.systemUptime
+        guard !isBypassed, now - bypassEndedAt >= Self.tapSuppressionAfterBypass else { return false }
         camera.focus(at: devicePoint)
+        return true
+    }
+
+    // MARK: 원본 보기 (라이브 전/후)
+
+    /// 프리뷰를 길게 누르는 동안 true: 라이브 파이프라인이 보정을 건너뛰고 원본 프레임을 보여 준다.
+    func setBypass(_ on: Bool) {
+        guard on != isBypassed else { return }
+        isBypassed = on
+        pipeline.isBypassed = on
+        if !on { bypassEndedAt = ProcessInfo.processInfo.systemUptime }
     }
 
     /// 현재 표시 배율(0.5× = 초광각, 1× = 광각). 카메라 서비스 값을 그대로 보여 준다.
@@ -260,7 +324,28 @@ final class CaptureViewModel: ObservableObject {
         preview.isMirrored = front
         faceTracker.reset()
         detectedFaceCount = 0
+        faceMarkers = []
         pushSettings()
+        let becameFront = front && !wasFrontCamera
+        wasFrontCamera = front
+        if becameFront, Self.shouldSuggestPortrait(portraitEnabled: services?.portraitModeEnabled ?? false,
+                                                   alreadyShown: defaults.bool(forKey: Self.portraitSuggestionKey)) {
+            showPortraitSuggestion = true
+        }
+    }
+
+    // MARK: 셀피 인물 모드 제안
+
+    /// 전면으로 바뀌었을 때 제안할지: 인물 모드가 꺼져 있고 아직 묻지 않았을 때만. 순수 함수.
+    nonisolated static func shouldSuggestPortrait(portraitEnabled: Bool, alreadyShown: Bool) -> Bool {
+        !portraitEnabled && !alreadyShown
+    }
+
+    /// 제안에 답함(켜기/나중에). 어느 쪽이든 다시 묻지 않는다.
+    func answerPortraitSuggestion(enable: Bool) {
+        defaults.set(true, forKey: Self.portraitSuggestionKey)
+        showPortraitSuggestion = false
+        if enable { services?.portraitModeEnabled = true }
     }
 
     // MARK: 촬영
@@ -376,6 +461,26 @@ final class CaptureViewModel: ObservableObject {
                 let faces = self.faceTracker.faceCount
                 if faces != self.detectedFaceCount { self.detectedFaceCount = faces }
                 self.stats = "\(s.rendered)fps · 버림 \(s.dropped)+\(cameraDropped) · \(Int(self.previewMaxDimension))px"
+            }
+        }
+    }
+
+    // MARK: 얼굴 마커
+
+    /// 0.25초마다 트래커의 얼굴 사각형을 읽어 마커를 갱신한다(1초 통계 루프와 별도). 1초 넘게 갱신이 없으면 빈 배열.
+    private func startMarkers() {
+        markerTask?.cancel()
+        markerTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: Self.markerInterval)
+                guard let self, !Task.isCancelled else { return }
+                let enabled = self.services?.portraitModeEnabled == true && !self.isBypassed
+                let snapshot = self.faceTracker.lastFaceRects
+                let rects = enabled ? snapshot.rects : []
+                if rects != self.faceMarkers { self.faceMarkers = rects }
+                if !rects.isEmpty, snapshot.imageSize != self.faceMarkerImageSize {
+                    self.faceMarkerImageSize = snapshot.imageSize
+                }
             }
         }
     }

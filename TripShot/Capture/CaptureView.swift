@@ -1,4 +1,4 @@
-// 촬영 탭(앱 시작 화면): 라이브 보정 프리뷰·인물 모드·렌즈(0.5×/1×/2×·전면 전환)·프리셋 스트립·셔터·마지막 사진(→ 사진 앱)·후처리 배지.
+// 촬영 탭(앱 시작 화면): 라이브 보정 프리뷰(얼굴 마커·길게 눌러 원본)·렌즈(0.5×/1×/2×·전면 전환)·강도 칩·프리셋 스트립·셔터·인물 버튼·마지막 사진(→ 사진 앱)·후처리 배지.
 import SwiftData
 import SwiftUI
 
@@ -13,6 +13,8 @@ struct CaptureView: View {
     @State private var focusToken = 0
     /// 촬영 탭이 화면에 보이는지. 다른 탭에 있을 때 앱이 활성화돼도 카메라를 켜지 않기 위해.
     @State private var isVisible = false
+    /// 프리뷰를 길게 누르는 동안 true → 라이브 보정을 건너뛰고 원본 프레임 표시.
+    @GestureState private var isPressingPreview = false
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.openURL) private var openURL
 
@@ -87,6 +89,25 @@ struct CaptureView: View {
         .onChange(of: presets.map(\.id)) { _, _ in vm.syncPresets(presets) }
         .onChange(of: presets.map(\.paramsData)) { _, _ in vm.syncPresets(presets) }
         .onChange(of: services.portraitModeEnabled) { _, _ in vm.refreshContext() }
+        // 강도 칩·직접 값(앨범에서 바꾼 경우 포함) → 현재 params의 인물 값만 다시 계산.
+        .onChange(of: services.portraitStrength) { _, _ in vm.refreshPortrait() }
+        .onChange(of: services.customPortrait) { _, _ in vm.refreshPortrait() }
+        .onChange(of: isPressingPreview) { _, pressing in vm.setBypass(pressing) }
+        // 전면 카메라 전환 시 한 번만 묻는다. 어느 쪽으로 답하든(바깥 탭 = 나중에) 다시 묻지 않는다.
+        .confirmationDialog("셀피에 인물 모드를 켤까요?", isPresented: suggestionBinding, titleVisibility: .visible) {
+            Button("켜기") { vm.answerPortraitSuggestion(enable: true) }
+            Button("나중에", role: .cancel) { vm.answerPortraitSuggestion(enable: false) }
+        } message: {
+            Text("피부·윤곽 보정을 라이브로 보면서 찍을 수 있습니다. 촬영 버튼 오른쪽 얼굴 버튼으로 언제든 바꿀 수 있어요.")
+        }
+    }
+
+    private var suggestionBinding: Binding<Bool> {
+        Binding(get: { vm.showPortraitSuggestion },
+                set: { shown in
+                    // 바깥 탭 등으로 닫힘: "나중에"로 기억한다.
+                    if !shown && vm.showPortraitSuggestion { vm.answerPortraitSuggestion(enable: false) }
+                })
     }
 
     // MARK: 권한 거부
@@ -108,27 +129,9 @@ struct CaptureView: View {
 
     private var topBar: some View {
         HStack(alignment: .center) {
-            // 인물 모드 스위치(앱 상태, 마지막 상태 기억). 켜져 있고 얼굴이 잡히면 작은 얼굴 표시(PLAN §3.3).
-            HStack(spacing: 6) {
-                Toggle(isOn: $services.portraitModeEnabled) {
-                    Label("인물", systemImage: "person.crop.circle")
-                }
-                .toggleStyle(.button)
-                if services.portraitModeEnabled && vm.detectedFaceCount > 0 {
-                    HStack(spacing: 2) {
-                        Image(systemName: "face.smiling")
-                        if vm.detectedFaceCount > 1 {
-                            Text("\(vm.detectedFaceCount)")
-                                .font(.caption2.monospacedDigit())
-                        }
-                    }
-                    .font(.footnote)
-                    .foregroundStyle(.yellow)
-                    .accessibilityElement(children: .combine)
-                    .accessibilityLabel("인물 보정 중, 얼굴 \(vm.detectedFaceCount)명")
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            // 인물 모드 버튼은 셔터 오른쪽으로 옮겼다(R1-S8b U5). 좌측은 비워 모드 선택을 가운데에 둔다.
+            Color.clear
+                .frame(maxWidth: .infinity, maxHeight: 1)
 
             Picker("모드", selection: $mode) {
                 ForEach(Mode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
@@ -172,10 +175,27 @@ struct CaptureView: View {
     /// 활성 포맷(4:3)의 사진 비율(세로 3:4) 그대로 보여 준다 → aspect-fill이어도 잘리는 부분이 없어 저장본과 구도가 같다.
     private var previewArea: some View {
         MetalPreviewView(coordinator: vm.preview) { devicePoint, viewPoint in
-            vm.focus(at: devicePoint)
-            showFocus(at: viewPoint)
+            // 원본 보기 중이거나 방금 뗀 탭은 포커스로 쓰지 않는다(길게 누르기와 충돌 방지).
+            if vm.focus(at: devicePoint) { showFocus(at: viewPoint) }
         }
         .aspectRatio(3.0 / 4.0, contentMode: .fit)
+        .overlay {
+            // 라이브 얼굴 마커: 인물 모드에서 얼굴이 잡히면 모서리 표시, 새 얼굴이 나타나고 1초 뒤 사라진다.
+            // 프레임은 연결 단계에서 이미 미러돼 있어(전면) 화면과 좌표가 같으므로 x 반전은 하지 않는다.
+            // TODO(검증): 전면에서 마커가 얼굴과 좌우 반대로 보이면 mirrored: vm.isFrontCamera로.
+            FaceMarkerOverlay(rects: vm.faceMarkers, imageSize: vm.faceMarkerImageSize, mirrored: false)
+                .allowsHitTesting(false)
+        }
+        .overlay(alignment: .topLeading) {
+            if isPressingPreview {
+                Text("원본")
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 8).padding(.vertical, 4)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .padding(8)
+                    .allowsHitTesting(false)
+            }
+        }
         .overlay {
             if let focusPoint {
                 Rectangle()
@@ -201,6 +221,22 @@ struct CaptureView: View {
                 .onChanged { value in vm.pinchChanged(value.magnification) }
                 .onEnded { _ in vm.pinchEnded() }
         )
+        // 라이브 전/후: 0.2초 이상 누르면 손을 뗄 때까지 원본. 핀치와 동시 인식, 탭 포커스는 UIKit 인식기라
+        // 여기서 순서를 정할 수 없어 ViewModel이 원본 보기 중·직후의 탭을 무시한다.
+        // TODO(검증): 최소 거리 0 DragGesture가 MTKView의 UITapGestureRecognizer를 막지 않는지, 핀치 중 길게 누르기가 켜지지 않는지 실기기 확인.
+        .simultaneousGesture(beforeAfterGesture)
+    }
+
+    /// 누르고 0.2초가 지나면 손을 뗄 때까지 원본(앨범 보정 화면과 같은 제스처).
+    private var beforeAfterGesture: some Gesture {
+        LongPressGesture(minimumDuration: 0.2)
+            .sequenced(before: DragGesture(minimumDistance: 0))
+            .updating($isPressingPreview) { value, state, _ in
+                switch value {
+                case .second(true, _): state = true
+                default: break
+                }
+            }
     }
 
     private func showFocus(at point: CGPoint) {
@@ -220,6 +256,11 @@ struct CaptureView: View {
             lensButtons
 
             if mode == .photo {
+                if services.portraitModeEnabled {
+                    PortraitStrengthChips(selection: vm.portraitStrengthSelection) { strength in
+                        vm.selectPortraitStrength(strength)
+                    }
+                }
                 PresetStrip(selection: vm.choice) { choice, params in
                     vm.select(choice: choice, params: params)
                 }
@@ -235,7 +276,7 @@ struct CaptureView: View {
                     flashScreen()
                 }
 
-                processingBadge
+                portraitControl
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
             .padding(.horizontal, 28)
@@ -318,20 +359,56 @@ struct CaptureView: View {
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(.white.opacity(0.4), lineWidth: 1))
     }
 
+    // MARK: 인물 버튼
+
+    /// 셔터 오른쪽: 인물 모드 원형 버튼(켜짐 = 노란 채움·검정 아이콘) + 후처리 배지(버튼 위 작은 뱃지) + 얼굴 수(버튼 아래).
+    private var portraitControl: some View {
+        VStack(spacing: 4) {
+            Button {
+                services.portraitModeEnabled.toggle()
+            } label: {
+                Image(systemName: "face.smiling")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(services.portraitModeEnabled ? Color.black : Color.white)
+                    .frame(width: 52, height: 52)
+                    .background(Circle().fill(services.portraitModeEnabled ? Color.yellow : Color.white.opacity(0.18)))
+            }
+            .buttonStyle(.plain)
+            .overlay(alignment: .topTrailing) { processingBadge }
+            .accessibilityLabel("인물 모드")
+            .accessibilityValue(services.portraitModeEnabled ? "켜짐" : "꺼짐")
+            .accessibilityAddTraits(services.portraitModeEnabled ? .isSelected : [])
+
+            // 인물 보정 중인 얼굴 수(PLAN §3.3 "지금 인물 보정 중" 표시). 자리를 유지해 버튼이 흔들리지 않게 한다.
+            Text(faceCountText)
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.yellow)
+                .frame(height: 12)
+                .accessibilityHidden(faceCountText.isEmpty)
+                .accessibilityLabel("인물 보정 중, 얼굴 \(vm.detectedFaceCount)명")
+        }
+    }
+
+    private var faceCountText: String {
+        guard services.portraitModeEnabled, vm.detectedFaceCount > 0 else { return "" }
+        return "얼굴 \(vm.detectedFaceCount)"
+    }
+
+    /// 후처리 중인 장 수(인물 버튼 위 작은 뱃지).
     @ViewBuilder
     private var processingBadge: some View {
         if vm.processingCount > 0 {
-            HStack(spacing: 6) {
+            HStack(spacing: 3) {
                 ProgressView()
-                    .controlSize(.small)
-                Text("보정 \(vm.processingCount)")
-                    .font(.footnote.monospacedDigit())
+                    .controlSize(.mini)
+                Text("\(vm.processingCount)")
+                    .font(.caption2.monospacedDigit())
             }
-            .padding(.horizontal, 10).padding(.vertical, 6)
+            .padding(.horizontal, 6).padding(.vertical, 3)
             .background(.ultraThinMaterial, in: Capsule())
+            .offset(x: 12, y: -12)
+            .allowsHitTesting(false)
             .accessibilityLabel("보정 저장 중 \(vm.processingCount)장")
-        } else {
-            Color.clear.frame(width: 52, height: 52)
         }
     }
 
@@ -361,5 +438,88 @@ struct ShutterButton: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(isVideo ? "녹화" : "촬영")
+    }
+}
+
+// MARK: - 라이브 얼굴 마커
+
+/// 얼굴 마커 좌표 변환(순수 함수, 테스트 대상).
+enum FaceMarkerGeometry {
+    /// 프리뷰 이미지 정규화 사각형(0~1, 원점 좌하단) → 뷰 좌표(원점 좌상단). 프리뷰는 aspect-fill.
+    /// - Parameters:
+    ///   - imageSize: 프리뷰 이미지 크기(비율만 쓴다). 0이면 세로 3:4.
+    ///   - mirrored: 화면이 이미지를 좌우 반전해 그릴 때만 true(x 반전). 이 앱은 프레임 자체가 미러되므로 false.
+    static func viewRect(normalized r: CGRect, imageSize: CGSize, viewSize: CGSize, mirrored: Bool) -> CGRect {
+        let size = (imageSize.width > 0 && imageSize.height > 0) ? imageSize : CGSize(width: 3, height: 4)
+        let fit = MetalPreviewView.fitRect(image: CGRect(origin: .zero, size: size), drawable: viewSize, mode: .fill)
+        let x = mirrored ? 1 - r.maxX : r.minX
+        let yTop = 1 - r.maxY   // 원점 좌하단 → 좌상단
+        return CGRect(x: fit.minX + x * fit.width,
+                      y: fit.minY + yTop * fit.height,
+                      width: r.width * fit.width,
+                      height: r.height * fit.height)
+    }
+}
+
+/// 얼굴 네 모서리에 짧은 노란 선. 새 얼굴(인덱스)이 나타나면 보였다가 1초 뒤 사라진다.
+struct FaceMarkerOverlay: View {
+    let rects: [CGRect]
+    let imageSize: CGSize
+    let mirrored: Bool
+
+    /// 지금 보이는 마커 인덱스(얼굴 id는 인덱스로 단순 처리).
+    @State private var visible: Set<Int> = []
+    /// 인덱스별 표시 세대(같은 인덱스가 다시 나타나면 이전 페이드 예약을 무효화).
+    @State private var generation: [Int: Int] = [:]
+
+    var body: some View {
+        GeometryReader { geo in
+            ForEach(Array(rects.enumerated()), id: \.offset) { index, rect in
+                let r = FaceMarkerGeometry.viewRect(normalized: rect, imageSize: imageSize,
+                                                    viewSize: geo.size, mirrored: mirrored)
+                CornerMarker(rect: r)
+                    .stroke(Color.yellow, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                    .opacity(visible.contains(index) ? 1 : 0)
+            }
+        }
+        .onChange(of: rects.count) { old, new in
+            if new < old { visible = visible.filter { $0 < new } }
+            guard new > old else { return }
+            for index in old..<new { show(index) }
+        }
+        .onAppear {
+            for index in rects.indices { show(index) }
+        }
+    }
+
+    private func show(_ index: Int) {
+        let gen = (generation[index] ?? 0) + 1
+        generation[index] = gen
+        visible.insert(index)
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1))
+            guard generation[index] == gen else { return }
+            withAnimation(.easeOut(duration: 0.3)) { _ = visible.remove(index) }
+        }
+    }
+}
+
+/// 사각형 네 모서리의 L자 선(변 길이의 20%).
+private struct CornerMarker: Shape {
+    let rect: CGRect
+
+    func path(in _: CGRect) -> Path {
+        var p = Path()
+        let len = min(rect.width, rect.height) * 0.2
+        let r = rect
+        // 좌상
+        p.move(to: CGPoint(x: r.minX, y: r.minY + len)); p.addLine(to: CGPoint(x: r.minX, y: r.minY)); p.addLine(to: CGPoint(x: r.minX + len, y: r.minY))
+        // 우상
+        p.move(to: CGPoint(x: r.maxX - len, y: r.minY)); p.addLine(to: CGPoint(x: r.maxX, y: r.minY)); p.addLine(to: CGPoint(x: r.maxX, y: r.minY + len))
+        // 우하
+        p.move(to: CGPoint(x: r.maxX, y: r.maxY - len)); p.addLine(to: CGPoint(x: r.maxX, y: r.maxY)); p.addLine(to: CGPoint(x: r.maxX - len, y: r.maxY))
+        // 좌하
+        p.move(to: CGPoint(x: r.minX + len, y: r.maxY)); p.addLine(to: CGPoint(x: r.minX, y: r.maxY)); p.addLine(to: CGPoint(x: r.minX, y: r.maxY - len))
+        return p
     }
 }

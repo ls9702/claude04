@@ -100,6 +100,7 @@ final class LivePipeline: @unchecked Sendable {
     private var settings = LiveSettings()
     private var settingsVersion = 0
     private var enabled = true
+    private var bypassed = false
 
     // 비디오 큐 전용 상태(잠금 없음).
     private var cachedAutoFilters: [CIFilter] = []
@@ -127,11 +128,18 @@ final class LivePipeline: @unchecked Sendable {
         set { lock.withLock { enabled = newValue } }
     }
 
+    /// true면 `process`가 방향 반영·다운샘플만 하고 보정 파이프라인을 건너뛴다(라이브 전/후: 프리뷰 길게 누르기, R1-S8b).
+    /// 설정·활성 플래그와 같은 잠금 한 번으로 읽으므로 프레임당 추가 비용이 없다.
+    var isBypassed: Bool {
+        get { lock.withLock { bypassed } }
+        set { lock.withLock { bypassed = newValue } }
+    }
+
     /// 프레임 하나를 보정한 CIImage. 비활성이면 nil.
     /// - Parameter orientation: 프레임을 세로로 세우는 방향. 카메라 연결이 90° 회전을 지원하면 `.up`,
     ///   지원하지 않으면(폴백) `.right`(시계 방향 90°).
     func process(_ pixelBuffer: CVPixelBuffer, orientation: CGImagePropertyOrientation = .up) -> CIImage? {
-        let (current, version, isOn) = lock.withLock { (settings, settingsVersion, enabled) }
+        let (current, version, isOn, isBypass) = lock.withLock { (settings, settingsVersion, enabled, bypassed) }
         guard isOn else { return nil }
 
         var image = CIImage(cvPixelBuffer: pixelBuffer)
@@ -139,6 +147,8 @@ final class LivePipeline: @unchecked Sendable {
             image = image.oriented(orientation)
         }
         image = Self.fastDownsample(image, maxDimension: current.maxDimension)
+        // 원본 보기(길게 누르는 동안): 보정·얼굴 검출 없이 다운샘플 결과 그대로. 자동 보정 캐시는 그대로 둔다.
+        if isBypass { return image }
 
         var params = current.params
         // 라이브 프리뷰 전용: 로컬 대비(clarity, 큰 반경 언샤프)는 GPU 비용이 커서 생략한다.

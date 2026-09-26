@@ -12,6 +12,8 @@ final class AppServices: ObservableObject {
     private enum Keys {
         static let portraitMode = "portraitMode"
         static let selectedPresetID = "selectedPresetID"
+        static let portraitStrength = "portraitStrength"
+        static let customPortrait = "customPortrait"
     }
 
     let renderer: EnhanceRenderer
@@ -34,6 +36,22 @@ final class AppServices: ObservableObject {
         didSet { defaults.set(selectedPresetID?.uuidString, forKey: Keys.selectedPresetID) }
     }
 
+    /// 인물 강도 칩(자연/보통/강함). 마지막 선택을 기억한다. 기본 보통. 칩을 고르면 `customPortrait`는 nil.
+    @Published var portraitStrength: PortraitStrength {
+        didSet { defaults.set(portraitStrength.rawValue, forKey: Keys.portraitStrength) }
+    }
+
+    /// 사용자가 슬라이더로 만든 "직접" 인물 값. nil이면 `portraitStrength`의 값을 쓴다. 칩 선택 시 nil.
+    @Published var customPortrait: PortraitParams? {
+        didSet {
+            if let customPortrait, let data = try? JSONEncoder().encode(customPortrait) {
+                defaults.set(data, forKey: Keys.customPortrait)
+            } else {
+                defaults.removeObject(forKey: Keys.customPortrait)
+            }
+        }
+    }
+
     private let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) {
@@ -43,6 +61,24 @@ final class AppServices: ObservableObject {
         self.defaults = defaults
         _portraitModeEnabled = Published(initialValue: defaults.bool(forKey: Keys.portraitMode))
         _selectedPresetID = Published(initialValue: defaults.string(forKey: Keys.selectedPresetID).flatMap(UUID.init(uuidString:)))
+        _portraitStrength = Published(initialValue: defaults.string(forKey: Keys.portraitStrength)
+            .flatMap(PortraitStrength.init(rawValue:)) ?? .normal)
+        _customPortrait = Published(initialValue: defaults.data(forKey: Keys.customPortrait)
+            .flatMap { try? JSONDecoder().decode(PortraitParams.self, from: $0) })
+    }
+
+    // MARK: 인물 강도
+
+    /// 촬영·앨범 공통: 프리셋(또는 현재) 인물 값 위에 칩·직접 값을 덮어쓴 최종 값.
+    /// 규칙은 `PortraitStrength.effective` 참고(원본 등 `enabled == false`는 그대로).
+    func effectivePortrait(base: PortraitParams) -> PortraitParams {
+        PortraitStrength.effective(base: base, strength: portraitStrength, custom: customPortrait)
+    }
+
+    /// 칩 선택: 단계 저장 + 직접 값 해제.
+    func selectPortraitStrength(_ strength: PortraitStrength) {
+        customPortrait = nil
+        portraitStrength = strength
     }
 
     /// 렌더마다 넘길 파이프라인 컨텍스트. 렌더러의 공유 컨텍스트(LUT 등)를 복사하고
@@ -67,6 +103,9 @@ final class AppServices: ObservableObject {
             context.portraitStage = PortraitStage.live(tracker: tracker, kernels: kernels)
         } else {
             context.portraitStage = PortraitStage.full(detector: faceDetector, kernels: kernels)
+            // 앨범 프리뷰(`isPreview = true`로 복사한 컨텍스트)는 배경 분리를 `.balanced`로 한다(EnhancePipeline이 고른다).
+            context.portraitPreviewStage = PortraitStage.full(detector: faceDetector, kernels: kernels,
+                                                              segmentationPreview: true)
         }
         return context
     }

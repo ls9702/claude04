@@ -1,4 +1,4 @@
-// 앨범 보정 화면의 상태와 로직: 사진 목록·사진별 보정값·다운샘플 프리뷰 렌더·저장(단일·일괄)·취소.
+// 앨범 보정 화면의 상태와 로직: 사진 목록·사진별 보정값(인물 강도 반영)·다운샘플 프리뷰 렌더·프리뷰 얼굴 검출(확대 토글)·저장(단일·일괄)·취소.
 import Foundation
 import Photos
 import SwiftUI
@@ -193,10 +193,27 @@ final class EnhanceViewModel: ObservableObject {
     /// 이번 세션에서 비파괴 저장에 성공한 사진(썸네일 표시용).
     @Published private(set) var savedIDs: Set<String> = []
     @Published var alertMessage: String?
+    /// 현재 사진 프리뷰(원본 다운샘플, 긴 변 ≤ 1024)의 얼굴 사각형. 정규화 좌표(0~1, 원점 좌하단), 넓이 큰 순.
+    /// `wantsPreviewFaces`가 true일 때만 검출한다(얼굴 확대 토글용, R1-S8b U3).
+    @Published private(set) var previewFaceRects: [CGRect] = []
+    /// 프리뷰 얼굴 검출을 할지(인물 모드가 켜져 있을 때 뷰가 true로). 켜지는 순간 현재 사진을 검출한다.
+    var wantsPreviewFaces = false {
+        didSet {
+            guard wantsPreviewFaces != oldValue else { return }
+            if wantsPreviewFaces { detectPreviewFacesIfNeeded() } else { previewFaceRects = [] }
+        }
+    }
 
     private let renderer: EnhanceRenderer?
     private let saver: PhotoSaving?
     private let contextProvider: @MainActor () -> PipelineContext
+    /// 프리셋 인물 값 위에 강도 칩·직접 값을 덮어쓰는 규칙(`AppServices.effectivePortrait`). 기본은 그대로.
+    private let portraitOverride: @MainActor (PortraitParams) -> PortraitParams
+    /// 프리뷰 얼굴 검출기(확대 토글). nil이면 검출하지 않는다(테스트).
+    private let faceDetector: FaceDetector?
+    /// 사진별 프리뷰 얼굴(정규화). 소스 캐시와 함께 비운다.
+    private var faceRectsByID: [String: [CGRect]] = [:]
+    private var faceTask: Task<Void, Never>?
 
     /// 사진별 다운샘플 원본 캐시(최대 10장, init에서 설정). 풀해상도는 넣지 않는다.
     private let sourceCache = NSCache<NSString, UIImage>()
@@ -215,10 +232,14 @@ final class EnhanceViewModel: ObservableObject {
 
     init(renderer: EnhanceRenderer? = nil,
          saver: PhotoSaving? = nil,
-         contextProvider: @escaping @MainActor () -> PipelineContext = { PipelineContext() }) {
+         contextProvider: @escaping @MainActor () -> PipelineContext = { PipelineContext() },
+         portraitOverride: @escaping @MainActor (PortraitParams) -> PortraitParams = { $0 },
+         faceDetector: FaceDetector? = nil) {
         self.renderer = renderer
         self.saver = saver
         self.contextProvider = contextProvider
+        self.portraitOverride = portraitOverride
+        self.faceDetector = faceDetector
         sourceCache.countLimit = Self.sourceCacheLimit
     }
 
@@ -226,7 +247,9 @@ final class EnhanceViewModel: ObservableObject {
     convenience init(services: AppServices) {
         self.init(renderer: services.renderer,
                   saver: services.photoSaver,
-                  contextProvider: { [weak services] in services?.pipelineContext() ?? PipelineContext() })
+                  contextProvider: { [weak services] in services?.pipelineContext() ?? PipelineContext() },
+                  portraitOverride: { [weak services] base in services?.effectivePortrait(base: base) ?? base },
+                  faceDetector: services.faceDetector)
     }
 
     // MARK: 조회
@@ -329,6 +352,8 @@ final class EnhanceViewModel: ObservableObject {
         sourceVersion = [:]
         savedIDs = []
         sourceCache.removeAllObjects()
+        faceRectsByID = [:]
+        previewFaceRects = []
     }
 
     // MARK: 이동
@@ -345,7 +370,10 @@ final class EnhanceViewModel: ObservableObject {
     // MARK: 보정값
 
     /// 손대지 않은 사진에 쓸 기본값(앱의 선택 프리셋). 현재 사진이 기본값을 쓰고 있으면 다시 렌더한다.
+    /// 인물 값은 강도 칩·직접 값을 덮어쓴다(`portraitOverride`) — 인물 모드가 켜져 있으면 칩이 프리셋보다 우선.
     func setDefault(params: PresetParams, choice: PresetChoice?) {
+        var params = params
+        params.portrait = portraitOverride(params.portrait)
         guard params != defaultParams || choice != defaultChoice else { return }
         defaultParams = params
         defaultChoice = choice
@@ -355,8 +383,11 @@ final class EnhanceViewModel: ObservableObject {
     }
 
     /// 프리셋 스트립 선택을 현재 사진에 적용한다.
+    /// 인물 값은 강도 칩·직접 값을 덮어쓴다(`portraitOverride`).
     func applyPreset(_ params: PresetParams, choice: PresetChoice) {
         guard let id = currentItem?.localID, !isSaving else { return }
+        var params = params
+        params.portrait = portraitOverride(params.portrait)
         paramsByID[id] = params
         choiceByID[id] = choice
         touchedIDs.insert(id)
@@ -374,6 +405,16 @@ final class EnhanceViewModel: ObservableObject {
         paramsByID[id] = params
         touchedIDs.insert(id)
         scheduleRender(debounce: true)
+    }
+
+    /// 강도 칩 선택 등: 현재 사진의 `portrait`만 바꾼다(프리셋의 다른 값 유지). 렌더는 즉시.
+    func updateCurrentPortrait(_ portrait: PortraitParams) {
+        guard let id = currentItem?.localID, !isSaving else { return }
+        var params = self.params(for: id)
+        guard params.portrait != portrait else { return }
+        params.portrait = portrait
+        updateCurrentParams(params)
+        scheduleRender(debounce: false)
     }
 
     /// 현재 사진의 보정값을 목록의 모든 사진에 적용한다(일괄 저장 전에 사용).
@@ -414,12 +455,15 @@ final class EnhanceViewModel: ObservableObject {
         }
         let id = item.localID
         startRestoreIfNeeded(item)
+        faceTask?.cancel()
+        previewFaceRects = faceRectsByID[id] ?? []
 
         if let cached = sourceCache.object(forKey: id as NSString) {
             isLoadingPreview = false
             originalImage = cached
             previewImage = nil
             scheduleRender(debounce: false)
+            detectPreviewFacesIfNeeded()
             return
         }
 
@@ -443,7 +487,40 @@ final class EnhanceViewModel: ObservableObject {
             self.sourceCache.setObject(image, forKey: id as NSString)
             self.originalImage = image
             self.scheduleRender(debounce: false)
+            self.detectPreviewFacesIfNeeded()
         }
+    }
+
+    // MARK: 프리뷰 얼굴 (확대 토글)
+
+    /// 현재 사진의 프리뷰 원본에서 얼굴을 한 번 검출한다(사진별 캐시). `wantsPreviewFaces`가 false거나 검출기가 없으면 아무 일 없음.
+    /// 이전 편집이 복원돼 소스가 `.unadjusted`로 바뀌어도 얼굴 위치는 같다고 보고 캐시를 유지한다.
+    func detectPreviewFacesIfNeeded() {
+        guard wantsPreviewFaces, let detector = faceDetector, let item = currentItem else { return }
+        let id = item.localID
+        if let cached = faceRectsByID[id] {
+            previewFaceRects = cached
+            return
+        }
+        guard let source = sourceCache.object(forKey: id as NSString) else { return }
+        faceTask?.cancel()
+        faceTask = Task { [weak self] in
+            let job = Task.detached(priority: .userInitiated) { () -> [CGRect] in
+                Self.detectFaceRects(in: source, detector: detector)
+            }
+            let rects = await withTaskCancellationHandler { await job.value } onCancel: { job.cancel() }
+            guard let self, !Task.isCancelled else { return }
+            self.faceRectsByID[id] = rects
+            if self.currentItem?.localID == id { self.previewFaceRects = rects }
+        }
+    }
+
+    /// 프리뷰 UIImage(방향 반영)에서 얼굴 → 정규화 사각형(넓이 큰 순). 메인 밖에서 부른다.
+    nonisolated static func detectFaceRects(in image: UIImage, detector: FaceDetector) -> [CGRect] {
+        guard let source = EnhanceRenderer.ciImage(from: image) else { return [] }
+        let upright = source.oriented(EnhanceRenderer.cgOrientation(image.imageOrientation))
+        let faces = detector.detect(in: upright, detectionMaxDimension: FaceDetector.defaultDetectionMaxDimension)
+        return SmoothedFaceTracker.normalizedRects(faces, in: upright.extent)
     }
 
     /// 현재 사진의 프리뷰를 다시 렌더한다. 이전 렌더는 취소한다(동시에 여러 렌더를 걸지 않음).
@@ -457,7 +534,9 @@ final class EnhanceViewModel: ObservableObject {
         }
         let id = item.localID
         let params = self.params(for: id)
-        let context = contextProvider()
+        // 프리뷰 렌더: 배경 분리를 `.balanced`로(저장 경로는 이 플래그가 false라 `.accurate`).
+        var context = contextProvider()
+        context.isPreview = true
         let dimension = Self.previewDimension
         let delay = debounce ? Self.renderDebounceNanoseconds : 0
         isRendering = true

@@ -30,9 +30,11 @@ struct PortraitParams: Codable, Equatable {
     var teethWhiten: Double = 0
     /// 피부톤 업(R1-S8a): 피부 마스크 안에서만 밝게·따뜻하게. 0~100, 0이면 효과 없음.
     var skinBrighten: Double = 0
+    /// 배경 흐림(R1-S8b): Vision 인물 분리로 사람 바깥만 흐린다. 0~100, 0이면 효과 없음. 저장·앨범에서만(라이브 미적용).
+    var backgroundBlur: Double = 0
 
     enum CodingKeys: String, CodingKey {
-        case enabled, skinSmooth, faceSlim, eyeEnlarge, teethWhiten, skinBrighten
+        case enabled, skinSmooth, faceSlim, eyeEnlarge, teethWhiten, skinBrighten, backgroundBlur
     }
 }
 
@@ -49,6 +51,7 @@ extension PortraitParams {
         eyeEnlarge = try c.decodeIfPresent(Double.self, forKey: .eyeEnlarge) ?? defaults.eyeEnlarge
         teethWhiten = try c.decodeIfPresent(Double.self, forKey: .teethWhiten) ?? defaults.teethWhiten
         skinBrighten = try c.decodeIfPresent(Double.self, forKey: .skinBrighten) ?? defaults.skinBrighten
+        backgroundBlur = try c.decodeIfPresent(Double.self, forKey: .backgroundBlur) ?? defaults.backgroundBlur
     }
 }
 

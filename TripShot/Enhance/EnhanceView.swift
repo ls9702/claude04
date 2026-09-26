@@ -1,4 +1,4 @@
-// 보정 탭(앨범 보정): 사진 선택 → 프리셋 → 슬라이더 → 전/후(길게 누르기) → 저장(비파괴·사본·일괄) → 닫기(선택 해제). 상태는 EnhanceViewModel.
+// 보정 탭(앨범 보정): 사진 선택 → 프리셋 → 슬라이더(기본/인물 세그먼트·강도 칩) → 전/후(길게 누르기)·얼굴 확대 → 저장(비파괴·사본·일괄) → 닫기(선택 해제). 상태는 EnhanceViewModel.
 import Photos
 import PhotosUI
 import SwiftData
@@ -21,12 +21,17 @@ private struct EnhanceScreen: View {
     @Query(sort: \Preset.sortOrder) private var presets: [Preset]
 
     @State private var pickerItems: [PhotosPickerItem] = []
-    @State private var showAdjustments = true
+    /// 조정 패널 탭(기본/인물).
+    @State private var panelTab: PanelTab = .basic
+    /// 얼굴 확대 토글(인물 모드에서 첫 얼굴 주변을 확대해 보여 준다, 이미지 재렌더 없음).
+    @State private var faceZoom = false
     @State private var showPresetNameAlert = false
     @State private var newPresetName = ""
     @State private var showClearConfirm = false
     /// 프리뷰를 길게 누르는 동안 true → 원본 표시.
     @GestureState private var isPressingPreview = false
+
+    enum PanelTab: Hashable { case basic, portrait }
 
     init(services: AppServices) {
         _services = ObservedObject(wrappedValue: services)
@@ -80,12 +85,20 @@ private struct EnhanceScreen: View {
                 let identifiers = newItems.map { $0.itemIdentifier }
                 Task { await vm.loadSelection(identifiers: identifiers) }
             }
-            .onChange(of: services.portraitModeEnabled) { _, _ in
+            .onChange(of: services.portraitModeEnabled) { _, enabled in
+                vm.wantsPreviewFaces = enabled
+                if !enabled { faceZoom = false }
                 vm.scheduleRender(debounce: false)
             }
             .onChange(of: services.selectedPresetID) { _, _ in syncDefaultPreset() }
             .onChange(of: presets.map(\.id)) { _, _ in syncDefaultPreset() }
-            .onAppear { syncDefaultPreset() }
+            // 강도 칩·직접 값이 바뀌면(촬영 화면에서 바꾼 경우 포함) 손대지 않은 사진의 기본값을 다시 계산한다.
+            .onChange(of: services.portraitStrength) { _, _ in syncDefaultPreset() }
+            .onChange(of: services.customPortrait) { _, _ in syncDefaultPreset() }
+            .onAppear {
+                vm.wantsPreviewFaces = services.portraitModeEnabled
+                syncDefaultPreset()
+            }
             .alert("알림", isPresented: alertBinding) {
                 Button("확인", role: .cancel) {}
             } message: {
@@ -157,9 +170,15 @@ private struct EnhanceScreen: View {
         ZStack {
             Color.black
             if let image = displayedImage {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFit()
+                GeometryReader { geo in
+                    let zoom = zoomTransform(imageSize: image.size, viewSize: geo.size)
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: geo.size.width, height: geo.size.height)
+                        .scaleEffect(zoom.scale)
+                        .offset(zoom.offset)
+                }
             }
             if vm.isLoadingPreview {
                 ProgressView().tint(.white)
@@ -178,13 +197,19 @@ private struct EnhanceScreen: View {
                 .padding(8)
         }
         .overlay(alignment: .topTrailing) {
-            HStack(spacing: 6) {
-                if vm.isRendering { ProgressView().controlSize(.mini) }
-                Text("\(vm.currentIndex + 1) / \(vm.items.count)")
-                    .font(.caption.monospacedDigit())
+            VStack(alignment: .trailing, spacing: 6) {
+                HStack(spacing: 6) {
+                    if vm.isRendering { ProgressView().controlSize(.mini) }
+                    Text("\(vm.currentIndex + 1) / \(vm.items.count)")
+                        .font(.caption.monospacedDigit())
+                }
+                .padding(.horizontal, 8).padding(.vertical, 4)
+                .background(.ultraThinMaterial, in: Capsule())
+
+                if services.portraitModeEnabled {
+                    faceZoomButton
+                }
             }
-            .padding(.horizontal, 8).padding(.vertical, 4)
-            .background(.ultraThinMaterial, in: Capsule())
             .padding(8)
         }
         .overlay(alignment: .bottom) {
@@ -203,6 +228,37 @@ private struct EnhanceScreen: View {
         .accessibilityLabel("보정 프리뷰 \(vm.currentIndex + 1) / \(vm.items.count)")
         .accessibilityAction(named: "다음 사진") { vm.showNext() }
         .accessibilityAction(named: "이전 사진") { vm.showPrevious() }
+        .accessibilityAction(named: "얼굴 확대 전환") {
+            // 프리뷰 전체가 하나의 접근성 요소라 오버레이 버튼 대신 동작으로 제공한다.
+            guard services.portraitModeEnabled, !vm.previewFaceRects.isEmpty else { return }
+            faceZoom.toggle()
+        }
+    }
+
+    // MARK: 얼굴 확대
+
+    /// 얼굴 확대 토글. 첫 얼굴(넓이 최대)이 없으면 비활성.
+    private var faceZoomButton: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.25)) { faceZoom.toggle() }
+        } label: {
+            Image(systemName: faceZoom ? "arrow.up.left.and.arrow.down.right" : "face.smiling")
+                .font(.footnote.weight(.semibold))
+                .frame(width: 32, height: 32)
+                .background(.ultraThinMaterial, in: Circle())
+        }
+        .buttonStyle(.plain)
+        .disabled(vm.previewFaceRects.isEmpty)
+        .opacity(vm.previewFaceRects.isEmpty ? 0.4 : 1)
+        .accessibilityLabel(faceZoom ? "얼굴 확대 끄기" : "얼굴 확대")
+    }
+
+    /// 확대가 켜져 있고 얼굴이 있으면 첫 얼굴 주변(1.6배 여유)을 화면 가운데로. 아니면 변환 없음.
+    private func zoomTransform(imageSize: CGSize, viewSize: CGSize) -> (scale: CGFloat, offset: CGSize) {
+        guard faceZoom, services.portraitModeEnabled, let face = vm.previewFaceRects.first else {
+            return (1, .zero)
+        }
+        return FaceZoomGeometry.transform(face: face, imageSize: imageSize, viewSize: viewSize)
     }
 
     /// 누르고 0.2초가 지나면 손을 뗄 때까지 원본을 보여 준다.
@@ -268,26 +324,17 @@ private struct EnhanceScreen: View {
                 }
                 .padding(.horizontal, -16)
 
-                DisclosureGroup("조정", isExpanded: $showAdjustments) {
-                    AdjustmentSliders(params: currentParamsBinding)
-                        .padding(.top, 8)
+                Picker("조정", selection: $panelTab) {
+                    Text("기본").tag(PanelTab.basic)
+                    Text("인물").tag(PanelTab.portrait)
                 }
-                .font(.subheadline.weight(.semibold))
+                .pickerStyle(.segmented)
 
-                VStack(alignment: .leading, spacing: 8) {
-                    // 인물 모드 스위치(앱 상태, 촬영 화면과 공유). 켜져 있을 때만 피부·피부톤·윤곽·눈·치아 슬라이더를 보인다.
-                    Toggle(isOn: $services.portraitModeEnabled) {
-                        Label("인물 모드", systemImage: "person.crop.circle")
-                    }
-                    if services.portraitModeEnabled {
-                        if vm.currentParams.portrait.enabled {
-                            AdjustmentSliders(params: currentParamsBinding, kinds: AdjustmentKind.portrait)
-                        } else {
-                            Text("원본에서는 인물 보정을 적용하지 않습니다")
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
+                switch panelTab {
+                case .basic:
+                    AdjustmentSliders(params: currentParamsBinding)
+                case .portrait:
+                    portraitPanel
                 }
             }
             .padding(16)
@@ -295,8 +342,47 @@ private struct EnhanceScreen: View {
         .frame(maxHeight: 340)
     }
 
+    /// 인물 탭: 인물 모드 스위치(앱 상태, 촬영 화면과 공유) → 강도 칩 + "직접" → 피부·피부톤·윤곽·눈·치아·배경 흐림.
+    private var portraitPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Toggle(isOn: $services.portraitModeEnabled) {
+                Label("인물 모드", systemImage: "person.crop.circle")
+            }
+            if services.portraitModeEnabled {
+                if vm.currentParams.portrait.enabled {
+                    PortraitStrengthChips(selection: PortraitStrength.matching(vm.currentParams.portrait)) { strength in
+                        // 칩: 앱 상태에 저장(직접 값 해제) → 현재 사진의 portrait만 교체.
+                        services.selectPortraitStrength(strength)
+                        vm.updateCurrentPortrait(services.effectivePortrait(base: vm.currentParams.portrait))
+                    }
+                    AdjustmentSliders(params: portraitParamsBinding, kinds: AdjustmentKind.portrait)
+                    Text("배경 흐림은 저장·보정 화면에서만 적용됩니다(촬영 라이브 프리뷰에는 보이지 않음).")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("원본에서는 인물 보정을 적용하지 않습니다")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                Text("인물 모드를 켜면 얼굴별 피부·윤곽·눈·치아 보정과 배경 흐림을 쓸 수 있습니다.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
     private var currentParamsBinding: Binding<PresetParams> {
         Binding(get: { vm.currentParams }, set: { vm.updateCurrentParams($0) })
+    }
+
+    /// 인물 슬라이더: 값이 바뀌면 "직접" 값으로 앱 상태에 보관한다(촬영 화면·다른 사진에도 우선 적용).
+    private var portraitParamsBinding: Binding<PresetParams> {
+        Binding(get: { vm.currentParams }, set: { newValue in
+            let oldPortrait = vm.currentParams.portrait
+            vm.updateCurrentParams(newValue)
+            if newValue.portrait != oldPortrait { services.customPortrait = newValue.portrait }
+        })
     }
 
     // MARK: 저장
@@ -444,5 +530,38 @@ private struct AssetThumbnail: View {
                                                  targetSize: CGSize(width: 168, height: 168),
                                                  contentMode: .aspectFill)
         }
+    }
+}
+
+// MARK: - 얼굴 확대 좌표
+
+/// 앨범 프리뷰 얼굴 확대 변환(순수 함수, 테스트 대상). SwiftUI `scaleEffect`(가운데 기준) 뒤 `offset`.
+enum FaceZoomGeometry {
+    /// 얼굴 사각형 주변 여유 배율.
+    static let margin: CGFloat = 1.6
+    static let maxScale: CGFloat = 5
+
+    /// - Parameters:
+    ///   - face: 프리뷰 이미지 정규화 사각형(0~1, 원점 좌하단).
+    ///   - imageSize: 표시 이미지 크기(비율만 쓴다). 이미지는 뷰에 aspect-fit으로 놓인다.
+    /// - Returns: 얼굴 중심이 뷰 중심에 오고, 얼굴×여유가 뷰 안에 들어오는 배율(1~5)과 이동량.
+    static func transform(face: CGRect, imageSize: CGSize, viewSize: CGSize,
+                          margin: CGFloat = margin) -> (scale: CGFloat, offset: CGSize) {
+        guard imageSize.width > 0, imageSize.height > 0, viewSize.width > 0, viewSize.height > 0,
+              face.width > 0, face.height > 0 else { return (1, .zero) }
+        let fit = MetalPreviewView.fitRect(image: CGRect(origin: .zero, size: imageSize), drawable: viewSize, mode: .fit)
+        let faceView = CGRect(x: fit.minX + face.minX * fit.width,
+                              y: fit.minY + (1 - face.maxY) * fit.height,
+                              width: face.width * fit.width,
+                              height: face.height * fit.height)
+        let regionW = faceView.width * margin
+        let regionH = faceView.height * margin
+        let raw = min(viewSize.width / regionW, viewSize.height / regionH)
+        let scale = min(max(raw, 1), maxScale)
+        let center = CGPoint(x: viewSize.width / 2, y: viewSize.height / 2)
+        // scaleEffect(가운데 기준): p → c + (p − c)·s. 얼굴 중심 f가 c로 오도록 offset = (c − f)·s.
+        let offset = CGSize(width: (center.x - faceView.midX) * scale,
+                            height: (center.y - faceView.midY) * scale)
+        return (scale, offset)
     }
 }

@@ -29,6 +29,11 @@ struct PipelineContext {
     /// 3단계 인물 보정 hook (`PortraitStage.full`/`.live`). nil이면 건너뜀.
     /// 결과의 `skinMask`는 4단계 선명도에 전달된다(PLAN §3.2: 선명도는 피부 마스크 바깥에만).
     var portraitStage: ((CIImage, PortraitParams) -> PortraitResult)? = nil
+    /// 앨범 프리뷰용 인물 hook(R1-S8b). `isPreview`가 true이고 이 값이 있으면 `portraitStage` 대신 쓴다.
+    /// 차이는 배경 흐림의 인물 분리 품질뿐이다(프리뷰 `.balanced`, 저장 `.accurate`).
+    var portraitPreviewStage: ((CIImage, PortraitParams) -> PortraitResult)? = nil
+    /// 앨범 프리뷰 렌더인지(R1-S8b). `EnhanceViewModel`이 프리뷰 렌더 컨텍스트에서만 true로 세운다. 저장 경로는 false.
+    var isPreview: Bool = false
     /// 5단계 저조도 hook (R1-S7 Zero-DCE++, `LowLightStage.make`). nil이면 건너뜀. `params.lowLight > 0`일 때만 호출.
     /// 두 번째 인자는 강도 0~1(`params.lowLight / 100`). 라이브 프리뷰 컨텍스트는 nil(PLAN §3.2: 프리뷰 비활성·저장 시만).
     var lowLightStage: ((CIImage, Double) -> CIImage)? = nil
@@ -39,6 +44,14 @@ struct PipelineContext {
     var lutColorSpace: CGColorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
     /// 테스트·디버그용: 각 단계가 끝날 때마다 (단계, 그 단계의 출력)으로 호출된다. 이미지에 영향 없음.
     var onStage: ((EnhanceStage, CIImage) -> Void)? = nil
+}
+
+extension PipelineContext {
+    /// 이번 렌더에 쓸 인물 hook: 프리뷰면 프리뷰용(있으면), 아니면 저장용.
+    var resolvedPortraitStage: ((CIImage, PortraitParams) -> PortraitResult)? {
+        if isPreview, let preview = portraitPreviewStage { return preview }
+        return portraitStage
+    }
 }
 
 /// 보정 파이프라인. 네임스페이스로만 쓰며 상태를 갖지 않는다.
@@ -57,7 +70,7 @@ enum EnhancePipeline {
         image = applyTone(params, to: image)
         context.onStage?(.tone, image)
 
-        let portrait = applyPortrait(params, to: image, hook: context.portraitStage)
+        let portrait = applyPortrait(params, to: image, hook: context.resolvedPortraitStage)
         image = portrait.image
         context.onStage?(.portrait, image)
 
