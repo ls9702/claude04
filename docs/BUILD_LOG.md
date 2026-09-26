@@ -11,6 +11,12 @@
 
 ---
 
+## 2026-09-26 18:30 · 커밋 ebb558b → (이번 커밋) · build.sh | test.sh | install-device.sh · R1-S8d 메뉴·썸네일 + R2-S1 효과 20종
+결과: **성공** (build 오류 0 · test **228/228**: 메뉴 3 + 효과 10 추가, `EnhanceTests.testStageOrderAndHooks` 기대값에 8단계 "effect" 추가). 실기기 설치 완료, 관찰 대기
+- R1-S8d: 촬영 화면 [원본]/[인물 ▾]/[배경 ▾] 드롭다운(`CaptureViewModel.selectOriginal/selectPortrait/selectScene`, `look`), 인물 버튼 제거, 썸네일 = 보관함 최근 사진(`loadLatestLibraryThumbnail`), 항상 탭 가능
+- R2-S1: `TripShot/Effects/`(EffectKind 20종·FaceAnchors·StickerArt·EffectRenderer·EffectPickerView), `PresetParams.effect`, 파이프라인 8단계 `effectStage`(라이브: 전용 SmoothedFaceTracker + LivePersonSegmenter .fast 2프레임마다 / 저장: 매번 검출·.accurate 분리). 셔터 오른쪽 [효과] 버튼 → 시트 45% 높이(프리뷰 보면서 고름)
+실기기 확인할 것: 효과별 라이브 fps(특히 만화·얼굴교환·배경바꾸기), 스티커 위치·크기 계수(`EffectRenderer.stickerLayers`의 fromEyesUp·width 배수), 전면 카메라에서 스티커·거울 방향, 저장본에 효과 반영·사진 앱 되돌리기
+
 ## 2026-09-26 16:40 · 커밋 16bbac0 → (이번 커밋) · build.sh | test.sh | install-device.sh · 릴리즈 1 체크포인트 1차 + 사용자 요청 2건
 결과: **성공** (build 오류 0 · test **215/215** — 릴리즈 1 체크포인트 197/197 확인 후 새 테스트 18개 추가). 실기기 설치 완료, 실기기 관찰은 진행 중
 환경: macOS 26.6.2, Xcode 27.0, iOS 27.0 시뮬레이터 iPhone 17 / iPhone 12 Pro iOS 27.0

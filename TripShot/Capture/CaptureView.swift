@@ -19,6 +19,8 @@ struct CaptureView: View {
     @Environment(\.openURL) private var openURL
     /// 탭해서 접은 경고(종류별). 그 경고가 사라지면 목록에서도 뺀다(다시 생기면 펼쳐서 보인다).
     @State private var collapsedWarnings: Set<DeviceWarning.Kind> = []
+    /// 효과 선택 시트(R2).
+    @State private var showEffects = false
 
     enum Mode: String, CaseIterable { case photo = "사진", shorts = "쇼츠" }
 
@@ -78,7 +80,7 @@ struct CaptureView: View {
             vm.configure(services: services)
             vm.syncPresets(presets)
             let cam = await Permissions.requestCamera()
-            // 마이크 권한은 영상 녹화(릴리즈 2)에서 요청한다. 릴리즈 1(사진)은 첫 실행에 묻지 않는다.
+            // 마이크 권한은 영상 녹화(릴리즈 3)에서 요청한다. 릴리즈 1(사진)은 첫 실행에 묻지 않는다.
             permissionDenied = !cam
             // 위치는 "앱 사용 중" 권한만 요청한다. 거부해도 위치 없이 촬영·저장된다(PLAN §3.4).
             services.locationProvider.start()
@@ -205,7 +207,7 @@ struct CaptureView: View {
     @ViewBuilder
     private var shortsNotice: some View {
         if mode == .shorts {
-            Text("쇼츠 촬영 보조는 릴리즈 2에서 추가됩니다")
+            Text("쇼츠 촬영 보조는 릴리즈 3에서 추가됩니다")
                 .font(.footnote)
                 .padding(.horizontal, 12).padding(.vertical, 6)
                 .background(.ultraThinMaterial, in: Capsule())
@@ -527,13 +529,34 @@ struct CaptureView: View {
 
     // MARK: 인물 버튼
 
-    /// 셔터 오른쪽: 후처리 배지 + 얼굴 수. 인물 모드 켜기/끄기는 [원본]/[인물 ▾]/[배경 ▾] 메뉴로 옮겼다.
-    /// TODO(R2-S1): 이 자리에 [효과] 버튼.
+    /// 셔터 오른쪽: [효과] 버튼(R2, 켜져 있으면 노란 테두리 + 그 효과 아이콘) + 후처리 배지 + 얼굴 수.
     private var portraitControl: some View {
         VStack(spacing: 4) {
-            Color.clear
+            Button {
+                showEffects = true
+            } label: {
+                Group {
+                    if let effect = vm.effect {
+                        Text(effect.icon).font(.system(size: 26))
+                    } else {
+                        Image(systemName: "sparkles").font(.title3.weight(.semibold)).foregroundStyle(.white)
+                    }
+                }
                 .frame(width: 52, height: 52)
-                .overlay(alignment: .topTrailing) { processingBadge }
+                .background(Circle().fill(Color.white.opacity(0.18)))
+                .overlay(Circle().stroke(vm.effect == nil ? .clear : Color.yellow, lineWidth: 2.5))
+            }
+            .buttonStyle(.plain)
+            .overlay(alignment: .topTrailing) { processingBadge }
+            .accessibilityLabel("효과")
+            .accessibilityValue(vm.effect?.title ?? "없음")
+            .sheet(isPresented: $showEffects) {
+                EffectPickerView(selection: vm.effect) { kind in
+                    vm.selectEffect(kind)
+                }
+                .presentationDetents([.fraction(0.45), .large])
+                .presentationBackgroundInteraction(.enabled(upThrough: .fraction(0.45)))
+            }
 
             // 인물 보정 중인 얼굴 수(PLAN §3.3 "지금 인물 보정 중" 표시). 자리를 유지해 버튼이 흔들리지 않게 한다.
             Text(faceCountText)

@@ -13,6 +13,8 @@ enum EnhanceStage: Int, CaseIterable {
     case lowLight
     case lut
     case finish
+    /// 8 효과(R2): 스티커·렌즈·스타일. PLAN §3.5(릴리즈 2).
+    case effect
 }
 
 /// 3단계 인물 hook의 결과. 보정된 이미지와, 4단계 선명도가 피하도록 넘길 피부 마스크(0~1 그레이, 1 = 피부).
@@ -37,6 +39,8 @@ struct PipelineContext {
     /// 5단계 저조도 hook (R1-S7 Zero-DCE++, `LowLightStage.make`). nil이면 건너뜀. `params.lowLight > 0`일 때만 호출.
     /// 두 번째 인자는 강도 0~1(`params.lowLight / 100`). 라이브 프리뷰 컨텍스트는 nil(PLAN §3.2: 프리뷰 비활성·저장 시만).
     var lowLightStage: ((CIImage, Double) -> CIImage)? = nil
+    /// 8단계 효과 hook(R2, `EffectStage.full`/`.live`). nil이거나 `params.effect`가 nil이면 건너뜀.
+    var effectStage: ((CIImage, EffectKind) -> CIImage)? = nil
     /// 7단계 수평 보정 회전각(라디안, 반시계 방향 +). 이미지를 이 각도만큼 돌려 수평을 맞춘다.
     /// Vision 검출 결과를 호출 측이 변환해 넣는다. nil이면 수평 보정 없음.
     var horizonAngle: Double? = nil
@@ -58,7 +62,7 @@ extension PipelineContext {
 /// 각 단계 함수는 강도가 0이면 필터를 만들지 않고 입력을 그대로 반환한다(픽셀 동일 보장).
 enum EnhancePipeline {
 
-    /// 전체 파이프라인. 순서: 1 자동 → 2 톤·색 → 3 인물 → 4 선명도 → 5 저조도 → 6 LUT → 7 마무리.
+    /// 전체 파이프라인. 순서: 1 자동 → 2 톤·색 → 3 인물 → 4 선명도 → 5 저조도 → 6 LUT → 7 마무리 → 8 효과.
     /// 공간 필터(반경이 있는 필터)의 반경은 입력 해상도에 비례시켜 프리뷰와 저장본의 결과가 같아 보이게 한다.
     static func apply(_ params: PresetParams, to input: CIImage, context: PipelineContext) -> CIImage {
         let scale = Mapping.resolutionScale(for: input.extent)
@@ -85,6 +89,11 @@ enum EnhancePipeline {
 
         image = applyFinish(params, to: image, horizonAngle: context.horizonAngle)
         context.onStage?(.finish, image)
+
+        if let raw = params.effect, let kind = EffectKind(rawValue: raw), let hook = context.effectStage {
+            image = hook(image, kind)
+        }
+        context.onStage?(.effect, image)
 
         return image
     }

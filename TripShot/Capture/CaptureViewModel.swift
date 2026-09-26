@@ -28,6 +28,11 @@ final class CaptureViewModel: ObservableObject {
     let preview = MetalPreviewView.Coordinator()
     /// 라이브 인물 보정용 얼굴 추적(비디오 큐 전용 상태 + 잠금 보호 얼굴 수). 3프레임마다 검출.
     let faceTracker = SmoothedFaceTracker()
+    /// 효과(R2) 전용 얼굴 트래커·사람 분리(비디오 큐 전용). 인물 트래커와 검출 주기를 공유하지 않는다.
+    private let effectTracker = SmoothedFaceTracker()
+    private let effectSegmenter = LivePersonSegmenter()
+    /// 선택한 효과(R2). nil = 효과 없음. 보정 선택(원본/인물/배경)과 독립이며 앱 실행 동안만 유지한다.
+    @Published private(set) var effect: EffectKind?
     /// 열·배터리·저전력·저장 공간 관찰(경고 배너). 열 상태는 여기서 받아 프리뷰 해상도에 반영한다.
     let deviceStatus: DeviceStatusMonitor
     /// 후처리 대기열(대기 중인 장) 상한. 넘으면 그 장은 보정 없이 원본만 남긴다(메모리·발열 보호).
@@ -240,6 +245,22 @@ final class CaptureViewModel: ObservableObject {
         }
     }
 
+    // MARK: 효과 (R2)
+
+    /// 보정 값 + 지금 효과. 라이브·촬영 후처리 모두 이 값을 쓴다.
+    var paramsWithEffect: PresetParams {
+        var p = params
+        p.effect = effect?.rawValue
+        return p
+    }
+
+    func selectEffect(_ kind: EffectKind?) {
+        guard kind != effect else { return }
+        effect = kind
+        effectTracker.reset()
+        pushSettings()
+    }
+
     // MARK: 원본 / 인물 / 배경 메뉴
 
     /// 촬영 화면 드롭다운 3종 중 지금 켜진 것. 서로 배타적이다.
@@ -327,8 +348,10 @@ final class CaptureViewModel: ObservableObject {
     /// 라이브는 인물 보정 경량 경로(`.live`: 평활 트래커 + 가우시안), 셔터 후처리는 `.full`(capture()의 스냅샷).
     private func pushSettings() {
         guard let services else { return }
-        pipeline.update(LiveSettings(params: params,
-                                     context: services.pipelineContext(quality: .live, liveTracker: faceTracker),
+        pipeline.update(LiveSettings(params: paramsWithEffect,
+                                     context: services.pipelineContext(quality: .live, liveTracker: faceTracker,
+                                                                       effectTracker: effectTracker,
+                                                                       effectSegmenter: effectSegmenter),
                                      maxDimension: previewMaxDimension))
     }
 
@@ -384,6 +407,7 @@ final class CaptureViewModel: ObservableObject {
     private func cameraDidSwitch(front: Bool) {
         preview.isMirrored = front
         faceTracker.reset()
+        effectTracker.reset()
         detectedFaceCount = 0
         faceMarkers = []
         pushSettings()
@@ -415,7 +439,7 @@ final class CaptureViewModel: ObservableObject {
     func capture() {
         captureTag &+= 1
         if let services {
-            snapshots[captureTag] = CaptureSnapshot(params: params, context: services.pipelineContext())
+            snapshots[captureTag] = CaptureSnapshot(params: paramsWithEffect, context: services.pipelineContext())
             pruneSnapshots()
         }
         camera.capturePhoto(tag: captureTag)

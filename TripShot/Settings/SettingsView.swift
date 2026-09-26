@@ -1,4 +1,4 @@
-// 설정 탭: 촬영 옵션(프레임 레이트)·인물 모드·보정 프리셋·쇼츠(릴리즈 2)·백업(JSON 내보내기/가져오기)·정보(모델·커널 상태, 무료 서명 만료)·앱 데이터 초기화.
+// 설정 탭: 촬영 옵션(프레임 레이트)·인물 모드·보정 프리셋·쇼츠(릴리즈 3)·백업(JSON 내보내기/가져오기)·정보(모델·커널 상태, 무료 서명 만료)·앱 데이터 초기화.
 import SwiftData
 import SwiftUI
 import UniformTypeIdentifiers
@@ -120,7 +120,7 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: 쇼츠 (릴리즈 2)
+    // MARK: 쇼츠 (릴리즈 3)
 
     private var shortsSection: some View {
         Section {
@@ -136,7 +136,7 @@ struct SettingsView: View {
         } header: {
             Text("쇼츠")
         } footer: {
-            Text("템플릿·규격 편집과 YouTube 음원 가져오기는 릴리즈 2에서 추가됩니다.")
+            Text("템플릿·규격 편집과 YouTube 음원 가져오기는 릴리즈 3에서 추가됩니다.")
         }
     }
 

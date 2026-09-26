@@ -20,6 +20,9 @@ struct PresetParams: Codable, Equatable {
     var vignette: Double = 0
     var autoHorizon: Bool = false
     var portrait: PortraitParams = .init()
+    /// 효과 템플릿(R2, `EffectKind.rawValue`). nil이면 효과 없음. 프리셋 화면에서는 다루지 않고 촬영 탭 [효과]에서만 넣는다.
+    /// 선택 값(Optional)이라 이 키가 없는 예전 JSON도 그대로 읽힌다.
+    var effect: String? = nil
 }
 
 struct PortraitParams: Codable, Equatable {

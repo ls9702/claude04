@@ -303,6 +303,7 @@ final class EnhanceTests: XCTestCase {
             "lowLight-hook", "lowLight",
             "lut",
             "finish",
+            "effect",   // R2: 효과 단계(effect nil이면 hook 없이 통과)
         ])
 
         // portrait hook은 톤 적용 후 이미지를 받는다

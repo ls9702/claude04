@@ -147,8 +147,18 @@ final class AppServices: ObservableObject {
     ///     `.live`(라이브 프리뷰) = `liveTracker`의 평활 검출 + 경량 블러. `.live`인데 트래커가 없으면 `.full`.
     ///     저조도 hook은 `.full`에서만 넣는다(`.live`는 트래커 유무와 관계없이 저조도 없음).
     ///   - liveTracker: 라이브 경로의 트래커(CaptureViewModel 소유, 비디오 큐 전용).
-    func pipelineContext(quality: PortraitQuality = .full, liveTracker: SmoothedFaceTracker? = nil) -> PipelineContext {
+    ///   - effectTracker·effectSegmenter: 라이브 효과(R2)용 얼굴 트래커·사람 분리. 인물 트래커와 따로 둔다
+    ///     (트래커는 호출 횟수로 검출 주기를 세므로 한 프레임에 두 번 부르면 안 된다).
+    func pipelineContext(quality: PortraitQuality = .full, liveTracker: SmoothedFaceTracker? = nil,
+                         effectTracker: SmoothedFaceTracker? = nil,
+                         effectSegmenter: LivePersonSegmenter? = nil) -> PipelineContext {
         var context = renderer.pipelineContext
+        // 8단계 효과: 인물 모드와 무관. 라이브는 전용 트래커, 저장·앨범은 매번 검출.
+        if quality == .live, let effectTracker, let effectSegmenter {
+            context.effectStage = EffectStage.live(tracker: effectTracker, segmenter: effectSegmenter)
+        } else {
+            context.effectStage = EffectStage.full(detector: faceDetector)
+        }
         // 5단계 저조도: 저장·앨범·촬영 후처리(.full)에서만. 라이브 프리뷰는 비활성(PLAN §3.2).
         // 앨범 프리뷰(EnhanceViewModel)도 .full이라 1024 프리뷰에서 모델이 돈다 — 512 추론 수십 ms라
         // 80ms 디바운스 렌더에 충분하고, 저장 결과를 미리 볼 수 있어 따로 끄는 플래그는 두지 않는다.

@@ -350,7 +350,7 @@ enum Backup {
     // MARK: 앱 데이터 초기화
 
     /// 직접 만든 프리셋·템플릿·규격을 지우고 기본 프리셋 값을 처음 값으로 되돌린 뒤 설정을 초기화한다.
-    /// 사진 보관함은 건드리지 않는다. 쇼츠 프로젝트·음원(릴리즈 2)도 건드리지 않는다.
+    /// 사진 보관함은 건드리지 않는다. 쇼츠 프로젝트·음원(릴리즈 3)도 건드리지 않는다.
     @MainActor
     static func resetAppData(context: ModelContext, services: AppServices) throws {
         let presets = try context.fetch(FetchDescriptor<Preset>())

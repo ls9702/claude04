@@ -48,7 +48,7 @@ enum CameraError: Error, LocalizedError, Equatable {
 /// - 세션 구성·시작/정지·카메라 전환·촬영 요청·포커스·줌: `sessionQueue`(직렬).
 /// - 프리뷰 프레임 콜백: `videoQueue`(직렬, userInteractive). `frameHandler`는 이 큐에서 불린다.
 /// - `@Published` 값: 메인에서만 바꾼다.
-/// (영상 녹화는 R2-S2)
+/// (영상 녹화는 R3-S2)
 ///
 /// 포맷(R1-S8a): `.photo` 프리셋은 비디오 프레임을 12MP급으로 보내 라이브 프리뷰 비용이 컸다.
 /// `.inputPriority`로 두고 활성 포맷을 직접 골라(4:3, 1920×1440 이하, 30fps) 프리뷰 프레임을 작게 받고,

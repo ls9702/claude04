@@ -1,7 +1,7 @@
 import SwiftData
 import SwiftUI
 
-/// R1-S0: 프로젝트 목록·생성. 클립·조립은 릴리즈 2(R2 단계).
+/// R1-S0: 프로젝트 목록·생성. 클립·조립은 릴리즈 3(R3 단계).
 struct ShortsView: View {
     @Environment(\.modelContext) private var context
     @Query(sort: \ShortsProject.createdAt, order: .reverse) private var projects: [ShortsProject]
