@@ -12,6 +12,7 @@ struct ProjectDetailView: View {
     @State private var pickerItem: PhotosPickerItem?
     @State private var shootingSlot: SlotSpec?
     @State private var message: String?
+    @State private var showExample = false
 
     private var template: ShortsTemplate? { ShortsTemplateLibrary.template(for: project.templateKey) }
 
@@ -26,6 +27,11 @@ struct ProjectDetailView: View {
                         Text("\(filled)/\(template.slots.count)칸 채움 · 완성 \(Int(template.totalSeconds.rounded()))초 · 전환 \(template.transition.title)")
                             .font(.caption).foregroundStyle(.secondary)
                         ProgressView(value: Double(filled), total: Double(template.slots.count))
+                        Button { showExample = true } label: {
+                            Label("예시 영상 보기", systemImage: "play.rectangle")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
                     }
                     .padding(.vertical, 4)
                 }
@@ -75,6 +81,9 @@ struct ProjectDetailView: View {
                     assign(assetID: assetID, to: slot.index, shotInApp: true)
                 }
             }
+        }
+        .sheet(isPresented: $showExample) {
+            if let template { TemplatePreviewSheet(template: template) }
         }
         .alert("알림", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
             Button("확인", role: .cancel) {}

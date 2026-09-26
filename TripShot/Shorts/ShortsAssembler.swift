@@ -157,6 +157,22 @@ enum ShortsTransitionRenderer {
             let zoomed = a.transformed(by: CGAffineTransform(translationX: size.width / 2, y: size.height / 2)
                 .scaledBy(x: s, y: s).translatedBy(x: -size.width / 2, y: -size.height / 2))
             return fade(b, alpha: ease).composited(over: zoomed).cropped(to: rect)
+        case .spin:
+            // 앞 장면은 시계 방향으로 돌며 커지고, 다음 장면은 반대편에서 돌아 들어온다(회전 블러 대신 줌 블러).
+            let c = CGAffineTransform(translationX: size.width / 2, y: size.height / 2)
+            func turned(_ img: CIImage, angle: CGFloat, scale: CGFloat) -> CIImage {
+                img.transformed(by: CGAffineTransform(translationX: -size.width / 2, y: -size.height / 2)
+                    .concatenating(CGAffineTransform(rotationAngle: angle)).concatenating(CGAffineTransform(scaleX: scale, y: scale))
+                    .concatenating(c))
+            }
+            let a1 = turned(a, angle: -CGFloat(ease) * .pi / 2, scale: 1 + CGFloat(ease) * 0.6)
+            let b1 = turned(b, angle: CGFloat(1 - ease) * .pi / 2, scale: 1.6 - CGFloat(ease) * 0.6)
+            let mixed = fade(b1, alpha: ease).composited(over: a1)
+            let blur = CGFloat(sin(p * .pi)) * 18
+            guard blur > 0.5 else { return mixed.cropped(to: rect) }
+            return mixed.clampedToExtent().applyingFilter("CIZoomBlur", parameters: [
+                kCIInputCenterKey: CIVector(x: size.width / 2, y: size.height / 2), "inputAmount": blur,
+            ]).cropped(to: rect)
         case .slideUp:
             let dy = size.height * CGFloat(ease)
             let moving = b.transformed(by: CGAffineTransform(translationX: 0, y: -size.height + dy))

@@ -15,6 +15,8 @@ enum ShortsTransition: String, Codable, CaseIterable {
     case zoomIn
     /// 위로 밀어 올리기(하늘로 넘기기, 0.4초).
     case slideUp
+    /// 화면이 빙글 돌며 넘어감(카메라 돌리기, 0.4초).
+    case spin
 
     /// 전환 길이(초). 컷은 0.
     var duration: Double {
@@ -24,6 +26,7 @@ enum ShortsTransition: String, Codable, CaseIterable {
         case .whipRight: return 0.3
         case .zoomIn: return 0.35
         case .slideUp: return 0.4
+        case .spin: return 0.4
         }
     }
 
@@ -34,6 +37,7 @@ enum ShortsTransition: String, Codable, CaseIterable {
         case .whipRight: return "휙 패닝"
         case .zoomIn: return "줌 인"
         case .slideUp: return "위로 넘기기"
+        case .spin: return "회전"
         }
     }
 }
@@ -50,8 +54,8 @@ struct SlotGuide: Codable, Equatable {
     }
 
     enum Arrow: String, Codable {
-        /// 왼쪽 밖에서 들어오기 / 오른쪽 밖에서 들어오기 / 왼쪽으로 나가기 / 오른쪽으로 나가기 / 위로 / 아래로 / 오른쪽으로 휙
-        case enterFromLeft, enterFromRight, exitLeft, exitRight, up, down, whipRight
+        /// 왼쪽 밖에서 들어오기 / 오른쪽 밖에서 들어오기 / 왼쪽으로 나가기 / 오른쪽으로 나가기 / 위로 / 아래로 / 오른쪽으로 휙 / 시계 방향으로 돌리기
+        case enterFromLeft, enterFromRight, exitLeft, exitRight, up, down, whipRight, rotate
     }
 
     var silhouette: Silhouette? = nil
@@ -121,6 +125,7 @@ enum ShortsTemplateLibrary {
 
     static let all: [ShortsTemplate] = [
         walkTeleport, handCover, whipPan, zoomJump, outOfFrame, samePose, skyTilt, lookBack, beatCut, basicStory,
+        jumpTeleport, cameraSpin, wallWipe, fingerSnap, panoramaFlow,
     ]
 
     // 1. 걸어서 순간이동
@@ -285,4 +290,92 @@ enum ShortsTemplateLibrary {
             ("엔딩", "노을·뒷모습 등 여운이 남는 장면.", 4, SlotGuide(silhouette: .back)),
         ]),
         transition: .dissolve, beatsPerMinute: nil)
+
+    // 11. 점프 순간이동
+    static let jumpTeleport: ShortsTemplate = {
+        let g = SlotGuide(silhouette: .standing, ghostPrevious: true, startCue: "공중에서 착지하며 시작", endCue: "점프!")
+        return ShortsTemplate(
+            id: "jumpTeleport", name: "점프 순간이동",
+            summary: "뛰어오를 때마다 다른 장소에 착지",
+            symbol: "figure.jumprope",
+            slots: slots([
+                ("장소 1", "실루엣 자리에 서 있다가 끝에 제자리에서 높이 점프하세요.", 2.5,
+                 SlotGuide(silhouette: .standing, endCue: "점프!")),
+                ("장소 2", "같은 자리·크기로, 점프 착지로 시작해 끝에 다시 점프.", 2.5, g),
+                ("장소 3", "같은 자리·크기로, 점프 착지로 시작해 끝에 다시 점프.", 2.5, g),
+                ("장소 4", "같은 자리·크기로, 점프 착지로 시작해 끝에 다시 점프.", 2.5, g),
+                ("장소 5", "착지하며 시작해 포즈로 마무리.", 2.5,
+                 SlotGuide(silhouette: .standing, ghostPrevious: true, startCue: "공중에서 착지하며 시작")),
+            ]),
+            transition: .cut, beatsPerMinute: nil)
+    }()
+
+    // 12. 카메라 돌리기
+    static let cameraSpin: ShortsTemplate = {
+        let g = SlotGuide(startArrow: .rotate, endArrow: .rotate, startCue: "돌리던 방향 그대로 멈추며 시작", endCue: "시계 방향으로 휙 돌리기")
+        return ShortsTemplate(
+            id: "cameraSpin", name: "카메라 돌리기",
+            summary: "폰을 빙글 돌리면 화면이 돌며 다음 장소",
+            symbol: "arrow.clockwise.circle",
+            slots: slots([
+                ("장소 1", "끝 1초에 폰을 시계 방향으로 빠르게 돌리세요.", 3, SlotGuide(endArrow: .rotate, endCue: "시계 방향으로 휙 돌리기")),
+                ("장소 2", "돌아가던 상태로 시작해 멈추고, 끝에 다시 돌리기.", 3, g),
+                ("장소 3", "돌아가던 상태로 시작해 멈추고, 끝에 다시 돌리기.", 3, g),
+                ("장소 4", "돌아가던 상태로 시작해 멈추며 마무리.", 3, SlotGuide(startArrow: .rotate, startCue: "돌리던 방향 그대로 멈추며 시작")),
+            ]),
+            transition: .spin, beatsPerMinute: nil)
+    }()
+
+    // 13. 벽 스치기
+    static let wallWipe: ShortsTemplate = {
+        let g = SlotGuide(startArrow: .enterFromLeft, endArrow: .whipRight,
+                          startCue: "기둥·벽 뒤에서 나오며 시작", endCue: "기둥·벽 뒤로 지나가며 가리기")
+        return ShortsTemplate(
+            id: "wallWipe", name: "벽 스치기",
+            summary: "기둥이나 벽이 화면을 가리는 순간 장소가 바뀜",
+            symbol: "rectangle.portrait.lefthalf.inset.filled",
+            slots: slots([
+                ("장소 1", "걸으며 찍다가 끝에 기둥·나무·벽이 화면을 꽉 가리도록 옆으로 지나가세요.", 3.5,
+                 SlotGuide(endArrow: .whipRight, endCue: "기둥·벽 뒤로 지나가며 가리기")),
+                ("장소 2", "가려진 상태에서 나오며 시작, 끝에 다시 가리기.", 3.5, g),
+                ("장소 3", "가려진 상태에서 나오며 시작, 끝에 다시 가리기.", 3.5, g),
+                ("장소 4", "가려진 상태에서 나오며 마무리.", 3.5,
+                 SlotGuide(startArrow: .enterFromLeft, startCue: "기둥·벽 뒤에서 나오며 시작")),
+            ]),
+            transition: .cut, beatsPerMinute: nil)
+    }()
+
+    // 14. 손가락 스냅
+    static let fingerSnap: ShortsTemplate = {
+        let g = SlotGuide(silhouette: .standing, ghostPrevious: true, startCue: "스냅 직후 자세로 시작", endCue: "딱! 손가락 튕기기")
+        return ShortsTemplate(
+            id: "fingerSnap", name: "손가락 스냅",
+            summary: "딱! 손가락을 튕길 때마다 장소·옷이 바뀜",
+            symbol: "hand.point.up.left.fill",
+            slots: slots([
+                ("장소 1", "카메라를 보며 서 있다가 끝에 손가락을 딱 튕기세요.", 3,
+                 SlotGuide(silhouette: .standing, endCue: "딱! 손가락 튕기기")),
+                ("장소 2", "튕긴 손 그대로 시작해, 끝에 다시 딱!", 3, g),
+                ("장소 3", "튕긴 손 그대로 시작해, 끝에 다시 딱!", 3, g),
+                ("장소 4", "튕긴 손 그대로 시작해 웃으며 마무리.", 3,
+                 SlotGuide(silhouette: .standing, ghostPrevious: true, startCue: "스냅 직후 자세로 시작")),
+            ]),
+            transition: .cut, beatsPerMinute: nil)
+    }()
+
+    // 15. 파노라마 이어가기
+    static let panoramaFlow: ShortsTemplate = {
+        let g = SlotGuide(startArrow: .enterFromLeft, endArrow: .exitRight, startCue: "왼쪽에서 오른쪽으로 천천히", horizonY: 0.5)
+        return ShortsTemplate(
+            id: "panoramaFlow", name: "파노라마 이어가기",
+            summary: "천천히 옆으로 돌리는 풍경이 장소를 넘어 이어짐",
+            symbol: "pano",
+            slots: slots([
+                ("풍경 1", "수평선을 기준선에 맞추고 왼쪽에서 오른쪽으로 천천히 돌리세요.", 4, g),
+                ("풍경 2", "같은 속도·같은 방향으로.", 4, g),
+                ("풍경 3", "같은 속도·같은 방향으로.", 4, g),
+                ("풍경 4", "같은 속도로 돌리다 멈추기.", 4, g),
+            ]),
+            transition: .dissolve, beatsPerMinute: nil)
+    }()
 }

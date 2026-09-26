@@ -8,10 +8,10 @@ final class ShortsTests: XCTestCase {
 
     // MARK: 템플릿
 
-    func testTenTemplates() {
+    func testTemplates() {
         let all = ShortsTemplateLibrary.all
-        XCTAssertEqual(all.count, 10)
-        XCTAssertEqual(Set(all.map(\.id)).count, 10, "키 중복 없음")
+        XCTAssertEqual(all.count, 15)
+        XCTAssertEqual(Set(all.map(\.id)).count, 15, "키 중복 없음")
         for t in all {
             XCTAssertFalse(t.slots.isEmpty, t.id)
             XCTAssertEqual(t.slots.map(\.index), Array(0..<t.slots.count), "\(t.id) 칸 번호 연속")

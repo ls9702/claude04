@@ -6,8 +6,12 @@ import Metal
 
 /// 한 번의 녹화. `appendVideo`는 비디오 큐, `appendAudio`는 오디오 큐에서 불린다(내부 잠금으로 순서 보호).
 final class VideoRecorder: @unchecked Sendable {
-    /// 출력 크기(세로 9:16).
+    /// 기본 출력 크기(세로 9:16).
     static let outputSize = CGSize(width: 1080, height: 1920)
+    /// 이 녹화의 출력 크기.
+    let size: CGSize
+    /// 실시간(카메라)이면 인코더가 바쁠 때 프레임을 버리고, 아니면(예시 영상 생성) 준비될 때까지 기다린다.
+    let realTime: Bool
     static let videoBitRate = 12_000_000
 
     let url: URL
@@ -28,13 +32,14 @@ final class VideoRecorder: @unchecked Sendable {
     private var lastVideoTime: CMTime = .invalid
     private(set) var framesWritten = 0
 
-    init(url: URL, unmirror: Bool, withAudio: Bool = true) throws {
+    init(url: URL, unmirror: Bool, withAudio: Bool = true, size: CGSize = VideoRecorder.outputSize, realTime: Bool = true) throws {
         self.url = url
         self.unmirror = unmirror
+        self.size = size
+        self.realTime = realTime
         try? FileManager.default.removeItem(at: url)
         writer = try AVAssetWriter(outputURL: url, fileType: .mov)
 
-        let size = Self.outputSize
         videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: [
             AVVideoCodecKey: AVVideoCodecType.hevc,
             AVVideoWidthKey: Int(size.width),
@@ -44,7 +49,7 @@ final class VideoRecorder: @unchecked Sendable {
                 AVVideoExpectedSourceFrameRateKey: 30,
             ],
         ])
-        videoInput.expectsMediaDataInRealTime = true
+        videoInput.expectsMediaDataInRealTime = realTime
         adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: videoInput, sourcePixelBufferAttributes: [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
             kCVPixelBufferWidthKey as String: Int(size.width),
@@ -98,12 +103,20 @@ final class VideoRecorder: @unchecked Sendable {
         }
         // 같은 시각이 두 번 오면 인코더가 거부하므로 건너뛴다.
         if lastVideoTime.isValid, time <= lastVideoTime { return }
+        if !realTime {
+            // 오프라인 생성: 인코더가 받을 수 있을 때까지 잠깐씩 기다린다(최대 약 2초).
+            var waited = 0
+            while !videoInput.isReadyForMoreMediaData && waited < 1000 {
+                usleep(2000)
+                waited += 1
+            }
+        }
         guard videoInput.isReadyForMoreMediaData, let pool = adaptor.pixelBufferPool else { return }
         var buffer: CVPixelBuffer?
         CVPixelBufferPoolCreatePixelBuffer(nil, pool, &buffer)
         guard let buffer else { return }
-        ciContext.render(Self.fitted(image, unmirror: unmirror), to: buffer,
-                         bounds: CGRect(origin: .zero, size: Self.outputSize),
+        ciContext.render(Self.fitted(image, unmirror: unmirror, size: size), to: buffer,
+                         bounds: CGRect(origin: .zero, size: size),
                          colorSpace: CGColorSpace(name: CGColorSpace.sRGB))
         if adaptor.append(buffer, withPresentationTime: time) {
             lastVideoTime = time
@@ -138,13 +151,12 @@ final class VideoRecorder: @unchecked Sendable {
     }
 
     /// 9:16 출력에 가득 차게(넘치는 쪽 잘림) 가운데 정렬, 원점 (0,0). 필요하면 좌우 반전.
-    static func fitted(_ image: CIImage, unmirror: Bool) -> CIImage {
+    static func fitted(_ image: CIImage, unmirror: Bool, size: CGSize = VideoRecorder.outputSize) -> CIImage {
         var img = image
         let e = img.extent
         if unmirror {
             img = img.transformed(by: CGAffineTransform(a: -1, b: 0, c: 0, d: 1, tx: 2 * e.midX, ty: 0))
         }
-        let size = outputSize
         let scale = max(size.width / e.width, size.height / e.height)
         let w = e.width * scale, h = e.height * scale
         let t = CGAffineTransform(translationX: (size.width - w) / 2, y: (size.height - h) / 2)

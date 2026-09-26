@@ -72,6 +72,7 @@ struct NewProjectSheet: View {
     @Query(sort: \FormatPreset.sortOrder) private var formats: [FormatPreset]
     @State private var title = ""
     @State private var templateKey: String = ShortsTemplateLibrary.all.first?.id ?? ""
+    @State private var previewTemplate: ShortsTemplate?
 
     var body: some View {
         NavigationStack {
@@ -91,6 +92,11 @@ struct NewProjectSheet: View {
                                         .font(.caption2).foregroundStyle(.secondary)
                                 }
                                 Spacer()
+                                Button { previewTemplate = t } label: {
+                                    Image(systemName: "play.circle").font(.title2)
+                                }
+                                .buttonStyle(.borderless)
+                                .accessibilityLabel("\(t.name) 예시 보기")
                                 if templateKey == t.id {
                                     Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.accentColor)
                                 }
@@ -100,6 +106,9 @@ struct NewProjectSheet: View {
                         .buttonStyle(.plain)
                     }
                 }
+            }
+            .sheet(item: $previewTemplate) { t in
+                TemplatePreviewSheet(template: t) { templateKey = t.id }
             }
             .navigationTitle("새 쇼츠")
             .navigationBarTitleDisplayMode(.inline)

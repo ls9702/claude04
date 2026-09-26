@@ -305,6 +305,7 @@ enum SlotGuideGeometry {
         case .up: return CGPoint(x: size.width / 2, y: size.height * 0.2)
         case .down: return CGPoint(x: size.width / 2, y: size.height * 0.2)
         case .whipRight: return CGPoint(x: size.width * 0.7, y: size.height * 0.5)
+        case .rotate: return CGPoint(x: size.width / 2, y: size.height * 0.5)
         }
     }
 }
@@ -322,6 +323,7 @@ private struct ArrowBadge: View {
             case .up: return ("arrow.up", "위로")
             case .down: return ("arrow.down", "아래로")
             case .whipRight: return ("arrow.right.to.line", "휙!")
+            case .rotate: return ("arrow.clockwise", "돌리기")
             }
         }()
         VStack(spacing: 4) {
