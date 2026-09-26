@@ -1,4 +1,4 @@
-// R1-S4 라이브 보정 프리뷰 테스트: 백프레셔 게이트, 열 상태 해상도, aspect-fill 배치, 탭 포커스 좌표, 프레임 보정 경로.
+// R1-S4 라이브 보정 프리뷰 테스트: 백프레셔 게이트, 열 상태 해상도, aspect-fill 배치, 탭 포커스 좌표(전면 미러 포함), 빠른 다운샘플, 프레임 보정 경로.
 import CoreGraphics
 import CoreImage
 import CoreVideo
@@ -52,11 +52,18 @@ final class LivePreviewTests: XCTestCase {
     // MARK: PreviewQuality
 
     func testPreviewQualityByThermalState() {
-        XCTAssertEqual(PreviewQuality.maxDimension(for: .nominal), 1024)
-        XCTAssertEqual(PreviewQuality.maxDimension(for: .fair), 1024)
-        XCTAssertEqual(PreviewQuality.maxDimension(for: .serious), 768)
+        // R1-S8a: 기본 768, serious 640, critical 512.
+        XCTAssertEqual(PreviewQuality.baseDimension, 768)
+        XCTAssertEqual(PreviewQuality.maxDimension(for: .nominal), 768)
+        XCTAssertEqual(PreviewQuality.maxDimension(for: .fair), 768)
+        XCTAssertEqual(PreviewQuality.maxDimension(for: .serious), 640)
         XCTAssertEqual(PreviewQuality.maxDimension(for: .critical), 512)
-        XCTAssertEqual(PreviewQuality.maxDimension(for: .serious, base: 2000), 1500)
+        XCTAssertEqual(PreviewQuality.maxDimension(for: .serious, base: 1200), 1000)
+        XCTAssertEqual(PreviewQuality.maxDimension(for: .critical, base: 1200), 800)
+    }
+
+    func testAutoRefreshIntervalIsAboutOneSecond() {
+        XCTAssertEqual(LivePipeline.autoRefreshInterval, 30)
     }
 
     // MARK: fitRect
@@ -140,6 +147,30 @@ final class LivePreviewTests: XCTestCase {
         XCTAssertEqual(center.y, 0.5, accuracy: 1e-6)
     }
 
+    func testDevicePointMirroredFlipsHorizontalAxis() {
+        // 전면(프리뷰 좌우 반전): u → 1 − u, devicePoint = (v, u).
+        let size = CGSize(width: 300, height: 400)
+        func dp(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+            MetalPreviewView.devicePoint(fromViewPoint: CGPoint(x: x, y: y), viewSize: size,
+                                         imageSize: CGSize(width: 3, height: 4), mirrored: true)
+        }
+        let topLeft = dp(0, 0)
+        XCTAssertEqual(topLeft.x, 0, accuracy: accuracy)
+        XCTAssertEqual(topLeft.y, 0, accuracy: accuracy)
+
+        let topRight = dp(300, 0)
+        XCTAssertEqual(topRight.x, 0, accuracy: accuracy)
+        XCTAssertEqual(topRight.y, 1, accuracy: accuracy)
+
+        let bottomLeft = dp(0, 400)
+        XCTAssertEqual(bottomLeft.x, 1, accuracy: accuracy)
+        XCTAssertEqual(bottomLeft.y, 0, accuracy: accuracy)
+
+        let center = dp(150, 200)
+        XCTAssertEqual(center.x, 0.5, accuracy: accuracy)
+        XCTAssertEqual(center.y, 0.5, accuracy: accuracy)
+    }
+
     func testDevicePointClampsOutsideView() {
         let p = MetalPreviewView.devicePoint(fromViewPoint: CGPoint(x: -50, y: 900),
                                              viewSize: CGSize(width: 300, height: 400))
@@ -164,6 +195,21 @@ final class LivePreviewTests: XCTestCase {
         XCTAssertNotNil(out)
         XCTAssertEqual(out?.extent.width, 150)
         XCTAssertEqual(out?.extent.height, 200)
+    }
+
+    func testFastDownsampleSizeAndOrigin() {
+        // 활성 포맷 1440×1920(세로) → 768: 576×768, 원점 (0, 0).
+        let input = CIImage(color: CIColor(red: 0.5, green: 0.5, blue: 0.5))
+            .cropped(to: CGRect(x: 10, y: 20, width: 1440, height: 1920))
+        let out = LivePipeline.fastDownsample(input, maxDimension: 768)
+        XCTAssertEqual(out.extent, CGRect(x: 0, y: 0, width: 576, height: 768))
+    }
+
+    func testFastDownsampleKeepsSmallImage() {
+        let input = CIImage(color: CIColor(red: 0.5, green: 0.5, blue: 0.5))
+            .cropped(to: CGRect(x: 0, y: 0, width: 300, height: 400))
+        let out = LivePipeline.fastDownsample(input, maxDimension: 768)
+        XCTAssertEqual(out.extent, input.extent, "긴 변이 상한 이하면 그대로")
     }
 
     func testLivePipelineFallbackOrientationMakesPortrait() {

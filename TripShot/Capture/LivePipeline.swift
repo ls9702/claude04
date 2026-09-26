@@ -1,4 +1,4 @@
-// 라이브 프리뷰 한 프레임의 보정: 카메라 프레임 → 다운샘플 → 보정 파이프라인 → CIImage (픽셀 렌더는 MetalPreviewView 담당).
+// 라이브 프리뷰 한 프레임의 보정: 카메라 프레임 → 빠른 다운샘플 → 보정 파이프라인 → CIImage (픽셀 렌더는 MetalPreviewView 담당).
 import CoreGraphics
 import CoreImage
 import CoreVideo
@@ -19,17 +19,21 @@ struct LiveSettings {
 // MARK: - 열 상태 → 프리뷰 해상도
 
 /// 기기 열 상태에 따른 프리뷰 해상도. 순수 함수만 둔다(관찰은 CaptureViewModel).
+///
+/// R1-S8a: iPhone 12 Pro 실측(1024 기본·serious에서 768px로도 20fps·발열)에 따라 기본을 768로 낮췄다.
+/// 저장·앨범의 공간 반경 기준(`Mapping.referenceDimension` = 1024)은 그대로다 — 반경은 `resolutionScale`로
+/// 해상도에 비례하므로 프리뷰 해상도를 바꿔도 보이는 결과(상대 크기)는 같다.
 enum PreviewQuality {
-    /// 기본 프리뷰 긴 변. 보정 파이프라인의 공간 반경 기준 해상도(`Mapping.referenceDimension`)와 같다.
-    static let baseDimension: CGFloat = 1024
+    /// 기본 프리뷰 긴 변.
+    static let baseDimension: CGFloat = 768
 
-    /// nominal/fair → base, serious → base×0.75, critical → base×0.5.
-    /// 공간 필터 반경은 `Mapping.resolutionScale`로 해상도에 비례하므로 해상도를 낮춰도 보이는 결과는 같다(더 흐릴 뿐).
+    /// nominal/fair → 768, serious → 640, critical → 512 (base 768 기준).
+    /// 다른 base를 주면 같은 비율(1, 1, 5/6, 2/3)로 줄인다.
     static func maxDimension(for state: ProcessInfo.ThermalState, base: CGFloat = baseDimension) -> CGFloat {
         switch state {
         case .nominal, .fair: return base
-        case .serious: return base * 0.75
-        case .critical: return base * 0.5
+        case .serious: return (base * 5 / 6).rounded()
+        case .critical: return (base * 2 / 3).rounded()
         @unknown default: return base
         }
     }
@@ -83,12 +87,14 @@ final class LockedFrameGate: @unchecked Sendable {
 /// - `update(_:)`·`isEnabled`는 어느 스레드에서나(보통 메인) 호출해도 된다. 설정은 잠금으로 통째로 교체한다.
 ///
 /// 프리뷰와 저장의 동일성: 두 경로 모두 `EnhancePipeline.apply`를 같은 `params`·`context`로 부른다.
-/// 차이는 (1) 프리뷰는 `maxDimension`으로 다운샘플한 입력, (2) 1단계 자동 보정의 "분석"을 몇 프레임마다 한 번만 하고
-/// 그 필터를 재사용한다는 점뿐이다(분석 결과를 적용하는 코드는 `EnhancePipeline.applyAutoFilters`로 같다).
+/// 차이는 (1) 프리뷰는 `maxDimension`으로 (이중선형) 다운샘플한 입력, (2) 1단계 자동 보정의 "분석"을 몇 프레임마다 한 번만 하고
+/// 그 필터를 재사용한다는 점(분석 결과를 적용하는 코드는 `EnhancePipeline.applyAutoFilters`로 같다),
+/// (3) **라이브 프리뷰에서만** 로컬 대비(clarity)를 생략한다는 점이다(R1-S8a 성능). 셔터 후처리(`.full`)는 clarity를 그대로 적용하므로
+/// 저장본은 프리뷰보다 미세한 로컬 대비가 조금 더 있을 수 있다.
 final class LivePipeline: @unchecked Sendable {
-    /// 자동 보정 분석을 다시 하는 프레임 간격(30fps 기준 약 0.5초).
-    /// TODO(검증): 실기기에서 `autoAdjustmentFilters` 분석 비용을 재 보고 간격을 조정(비용이 작으면 1로).
-    static let autoRefreshInterval = 15
+    /// 자동 보정 분석을 다시 하는 프레임 간격(30fps 기준 약 1초). R1-S8a: 실기기 발열로 15 → 30.
+    /// TODO(검증): 실기기에서 장면 전환 시 자동 보정이 늦게 따라오는 느낌이 크면 20 정도로.
+    static let autoRefreshInterval = 30
 
     private let lock = NSLock()
     private var settings = LiveSettings()
@@ -132,9 +138,13 @@ final class LivePipeline: @unchecked Sendable {
         if orientation != .up {
             image = image.oriented(orientation)
         }
-        image = EnhanceRenderer.downsample(image, maxDimension: current.maxDimension)
+        image = Self.fastDownsample(image, maxDimension: current.maxDimension)
 
         var params = current.params
+        // 라이브 프리뷰 전용: 로컬 대비(clarity, 큰 반경 언샤프)는 GPU 비용이 커서 생략한다.
+        // 세부 선명도(sharpness)는 반경이 작고 `Mapping.sharpness`가 해상도에 비례하므로 그대로 둔다.
+        // 셔터 후처리(CaptureViewModel 스냅샷 → `.full`)는 이 줄과 무관하게 clarity를 적용한다.
+        params.clarity = 0
         if params.auto {
             // 1단계 자동 보정: 분석은 가끔, 적용은 매 프레임. 적용 후 파이프라인에서는 자동 단계를 끈다.
             if version != cachedAutoVersion || framesSinceAutoAnalysis >= Self.autoRefreshInterval {
@@ -152,5 +162,24 @@ final class LivePipeline: @unchecked Sendable {
             params.auto = false
         }
         return EnhancePipeline.apply(params, to: image, context: current.context)
+    }
+
+    /// 라이브용 빠른 축소: 아핀 변환(기본 이중선형 샘플링). 활성 포맷이 1440×1920이면 768까지 2.5배 이내라
+    /// Lanczos 대비 차이가 작다. 저장·앨범 경로는 `EnhanceRenderer.downsample`(Lanczos)을 그대로 쓴다.
+    /// 긴 변이 `maxDimension` 이하면 입력 그대로. 결과는 원점 (0, 0), 정수 크기로 자른다.
+    static func fastDownsample(_ image: CIImage, maxDimension: CGFloat) -> CIImage {
+        let extent = image.extent
+        let longSide = max(extent.width, extent.height)
+        guard !extent.isInfinite, longSide > maxDimension, maxDimension > 0 else { return image }
+        let scale = maxDimension / longSide
+        // 원점 이동 → 축소. 가장자리 늘리기(clampedToExtent)로 테두리 투명 번짐을 막고 정수 크기로 자른다.
+        // 시그니처: CIImage.samplingLinear() -> CIImage (iOS 11+)
+        let transform = CGAffineTransform(scaleX: scale, y: scale)
+            .translatedBy(x: -extent.minX, y: -extent.minY)
+        let scaled = image.clampedToExtent().samplingLinear().transformed(by: transform)
+        let target = CGRect(x: 0, y: 0,
+                            width: max(1, floor(extent.width * scale)),
+                            height: max(1, floor(extent.height * scale)))
+        return scaled.cropped(to: target)
     }
 }

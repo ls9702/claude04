@@ -272,9 +272,9 @@ final class EnhanceViewModelTests: XCTestCase {
         let vm = EnhanceViewModel(saver: saver)
         let list = items(["a", "b", "c", "d"])
         vm.setItems(list)
-        saver.onSave = { id in
-            // "b" 저장 도중 취소 → "b"는 끝까지 저장되고 "c"부터 중단.
-            if id == "b" { await vm.cancelBatch() }
+        saver.onSave = { @MainActor id in
+            // "b" 저장 도중 취소 → "b"는 끝까지 저장되고 "c"부터 중단. cancelBatch()는 동기(메인 액터)라 await 불필요.
+            if id == "b" { vm.cancelBatch() }
         }
 
         let result = await vm.performSave(list, mode: .copy)
@@ -293,7 +293,7 @@ final class EnhanceViewModelTests: XCTestCase {
         let vm = EnhanceViewModel(saver: saver)
         let list = items(["a", "b"])
         vm.setItems(list)
-        saver.onSave = { id in if id == "a" { await vm.cancelBatch() } }
+        saver.onSave = { @MainActor id in if id == "a" { vm.cancelBatch() } }
         let first = await vm.performSave(list, mode: .nonDestructive)
         XCTAssertTrue(first.cancelled)
 

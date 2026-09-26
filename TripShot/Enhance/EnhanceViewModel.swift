@@ -311,6 +311,26 @@ final class EnhanceViewModel: ObservableObject {
         showCurrent()
     }
 
+    /// 사용자가 이번 선택에서 직접 바꾼 보정값이 있는지(선택 해제 확인 알림용).
+    /// 이전 편집에서 복원만 된 값(`applyRestored`)은 사진 보관함에 이미 있으므로 포함하지 않는다.
+    var hasAdjustments: Bool { !touchedIDs.isEmpty }
+
+    /// 선택 해제: 사진 목록과 사진별 보정값·선택 표시·복원 상태를 모두 비우고 초기 화면(사진 선택 전)으로 돌아간다.
+    /// 저장 중에는 무시한다. 앱의 기본 프리셋(`defaultParams`)은 앱 상태이므로 그대로 둔다.
+    func clearSelection() {
+        guard !isSaving else { return }
+        for task in restoreTasks.values { task.cancel() }
+        restoreTasks = [:]
+        setItems([])
+        paramsByID = [:]
+        choiceByID = [:]
+        touchedIDs = []
+        restoreChecked = []
+        sourceVersion = [:]
+        savedIDs = []
+        sourceCache.removeAllObjects()
+    }
+
     // MARK: 이동
 
     func select(index: Int) {

@@ -35,7 +35,6 @@ final class CaptureViewModel: ObservableObject {
     @Published private(set) var choice: PresetChoice = .auto
     /// 프리뷰·후처리에 쓰는 현재 보정값.
     @Published private(set) var params = PresetParams()
-    @Published private(set) var zoomFactor: CGFloat = 1
     @Published private(set) var thermalState: ProcessInfo.ThermalState = ProcessInfo.processInfo.thermalState
     @Published private(set) var previewMaxDimension: CGFloat = PreviewQuality.baseDimension
     /// 마지막 촬영 사진(보정 후처리가 끝나면 보정본으로 다시 읽는다).
@@ -53,7 +52,8 @@ final class CaptureViewModel: ObservableObject {
     private var services: AppServices?
     private var cameraReady = false
     private var isActive = false
-    private var pinchBaseZoom: CGFloat = 1
+    /// 핀치 시작 시점의 표시 배율(핀치 중에만 값이 있다).
+    private var pinchBaseZoom: CGFloat?
     private var lastCapturedID: String?
     private var captureTag = 0
     private var snapshots: [Int: CaptureSnapshot] = [:]
@@ -81,6 +81,14 @@ final class CaptureViewModel: ObservableObject {
         // CameraService의 메시지(@Published, 메인에서 변경)를 이 객체의 변경으로 전달해 화면이 갱신되게 한다.
         camera.objectWillChange
             .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
+
+        // 카메라 전환(전면 ↔ 후면)이 끝나면: 탭 좌표용 미러 플래그, 얼굴 트래커 초기화(좌표가 뒤바뀜),
+        // 설정 재전송(자동 보정 분석을 새 카메라 프레임으로 다시 하도록 버전을 올린다).
+        camera.$isFrontCamera
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] front in self?.cameraDidSwitch(front: front) }
             .store(in: &cancellables)
 
         // 열 상태 변화 알림은 임의 스레드에서 온다 → 메인으로.
@@ -214,21 +222,45 @@ final class CaptureViewModel: ObservableObject {
                                      maxDimension: previewMaxDimension))
     }
 
-    // MARK: 포커스·줌
+    // MARK: 포커스·줌·렌즈
 
     func focus(at devicePoint: CGPoint) {
         camera.focus(at: devicePoint)
     }
 
-    /// 핀치 중: 시작 배율 × 제스처 배율.
+    /// 현재 표시 배율(0.5× = 초광각, 1× = 광각). 카메라 서비스 값을 그대로 보여 준다.
+    var zoomFactor: CGFloat { camera.zoomFactor }
+    /// 렌즈 버튼(표시 배율). 초광각·망원이 없는 기기·전면에서는 해당 버튼이 빠진다.
+    var lensFactors: [CGFloat] { camera.availableDisplayFactors }
+    var isFrontCamera: Bool { camera.isFrontCamera }
+
+    /// 핀치 중: 시작 배율 × 제스처 배율(표시 배율 0.5~10 안으로 카메라 서비스가 자른다).
     func pinchChanged(_ magnification: CGFloat) {
-        camera.setZoom(factor: pinchBaseZoom * magnification) { [weak self] actual in
-            self?.zoomFactor = actual
-        }
+        let base = pinchBaseZoom ?? camera.zoomFactor
+        pinchBaseZoom = base
+        camera.setZoom(displayFactor: base * magnification)
     }
 
     func pinchEnded() {
-        pinchBaseZoom = zoomFactor
+        pinchBaseZoom = nil
+    }
+
+    /// 렌즈 버튼(0.5×·1×·2×): 해당 표시 배율로 즉시 전환(가상 기기가 렌즈를 고른다).
+    func selectLens(_ displayFactor: CGFloat) {
+        camera.setZoom(displayFactor: displayFactor)
+    }
+
+    /// 전면 ↔ 후면 전환. 세션 재구성은 카메라 서비스가 세션 큐에서 한다(프리뷰는 잠깐 멈출 수 있다).
+    func toggleCamera() {
+        pinchBaseZoom = nil
+        camera.switchCamera(to: camera.isFrontCamera ? .back : .front)
+    }
+
+    private func cameraDidSwitch(front: Bool) {
+        preview.isMirrored = front
+        faceTracker.reset()
+        detectedFaceCount = 0
+        pushSettings()
     }
 
     // MARK: 촬영

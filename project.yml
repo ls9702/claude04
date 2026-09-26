@@ -40,7 +40,6 @@ targets:
         CFBundleName: TripShot
         UILaunchScreen: {}
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
-        UIRequiresFullScreen: true
         UIUserInterfaceStyle: Dark
         ITSAppUsesNonExemptEncryption: false
         NSCameraUsageDescription: "사진과 쇼츠 클립을 촬영하기 위해 카메라를 사용합니다."

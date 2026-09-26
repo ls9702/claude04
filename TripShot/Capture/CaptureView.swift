@@ -1,4 +1,4 @@
-// 촬영 탭(앱 시작 화면): 라이브 보정 프리뷰·인물 모드·프리셋 스트립·셔터·마지막 사진·후처리 배지.
+// 촬영 탭(앱 시작 화면): 라이브 보정 프리뷰·인물 모드·렌즈(0.5×/1×/2×·전면 전환)·프리셋 스트립·셔터·마지막 사진(→ 사진 앱)·후처리 배지.
 import SwiftData
 import SwiftUI
 
@@ -14,6 +14,7 @@ struct CaptureView: View {
     /// 촬영 탭이 화면에 보이는지. 다른 탭에 있을 때 앱이 활성화돼도 카메라를 켜지 않기 위해.
     @State private var isVisible = false
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.openURL) private var openURL
 
     enum Mode: String, CaseIterable { case photo = "사진", shorts = "쇼츠" }
 
@@ -136,8 +137,18 @@ struct CaptureView: View {
             .frame(width: 140)
 
             VStack(alignment: .trailing, spacing: 2) {
-                Text(String(format: "%.1f×", vm.zoomFactor))
-                    .font(.footnote.monospacedDigit().weight(.semibold))
+                HStack(spacing: 10) {
+                    Text(Self.zoomLabel(vm.zoomFactor))
+                        .font(.footnote.monospacedDigit().weight(.semibold))
+                    // 전면 ↔ 후면 전환. 전환 중 프리뷰가 잠깐 멈출 수 있다.
+                    Button {
+                        vm.toggleCamera()
+                    } label: {
+                        Image(systemName: "arrow.triangle.2.circlepath.camera")
+                            .font(.body)
+                    }
+                    .accessibilityLabel(vm.isFrontCamera ? "후면 카메라로 전환" : "전면 카메라로 전환")
+                }
                 if vm.thermalState == .serious || vm.thermalState == .critical {
                     Label("발열로 프리뷰 화질 낮춤", systemImage: "thermometer.high")
                         .font(.caption2)
@@ -158,7 +169,7 @@ struct CaptureView: View {
 
     // MARK: 프리뷰
 
-    /// .photo 프리셋의 사진 비율(세로 3:4) 그대로 보여 준다 → aspect-fill이어도 잘리는 부분이 없어 저장본과 구도가 같다.
+    /// 활성 포맷(4:3)의 사진 비율(세로 3:4) 그대로 보여 준다 → aspect-fill이어도 잘리는 부분이 없어 저장본과 구도가 같다.
     private var previewArea: some View {
         MetalPreviewView(coordinator: vm.preview) { devicePoint, viewPoint in
             vm.focus(at: devicePoint)
@@ -206,6 +217,8 @@ struct CaptureView: View {
 
     private var bottomControls: some View {
         VStack(spacing: 14) {
+            lensButtons
+
             if mode == .photo {
                 PresetStrip(selection: vm.choice) { choice, params in
                     vm.select(choice: choice, params: params)
@@ -231,7 +244,66 @@ struct CaptureView: View {
         .padding(.top, 8)
     }
 
+    // MARK: 렌즈
+
+    /// 렌즈 버튼 행(0.5×·1×·2×). 기기에 없는 렌즈·전면에서는 해당 버튼이 빠지고, 하나뿐이면 행을 숨긴다.
+    @ViewBuilder
+    private var lensButtons: some View {
+        let factors = vm.lensFactors
+        if factors.count > 1 {
+            let selected = Self.selectedLens(zoom: vm.zoomFactor, factors: factors)
+            HStack(spacing: 12) {
+                ForEach(factors, id: \.self) { factor in
+                    let isOn = factor == selected
+                    Button {
+                        vm.selectLens(factor)
+                    } label: {
+                        Text(Self.lensLabel(factor))
+                            .font(.caption.monospacedDigit().weight(.semibold))
+                            .foregroundStyle(isOn ? Color.yellow : Color.white)
+                            .frame(width: 40, height: 40)
+                            .background(Circle().fill(Color.white.opacity(isOn ? 0.25 : 0.12)))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(Self.lensLabel(factor)) 렌즈")
+                    .accessibilityAddTraits(isOn ? .isSelected : [])
+                }
+            }
+        }
+    }
+
+    /// 현재 배율에서 강조할 렌즈 버튼: 배율 이하인 버튼 중 가장 큰 것(예: 1.4× → 1×). 반올림 오차 허용.
+    nonisolated static func selectedLens(zoom: CGFloat, factors: [CGFloat]) -> CGFloat? {
+        factors.filter { $0 <= zoom + 0.01 }.max() ?? factors.min()
+    }
+
+    nonisolated static func lensLabel(_ factor: CGFloat) -> String {
+        factor < 1 ? String(format: "%.1f×", factor) : String(format: "%.0f×", factor)
+    }
+
+    nonisolated static func zoomLabel(_ factor: CGFloat) -> String {
+        String(format: "%.1f×", factor)
+    }
+
+    // MARK: 마지막 사진
+
+    /// 마지막 사진 썸네일. 탭하면 사진 앱을 연다.
+    /// 특정 사진(에셋)으로 바로 여는 공개 API는 없어서 `photos-redirect://`로 사진 앱을 여는 데까지만 한다
+    /// (보통 "보관함" 탭의 최근 항목이 보이므로 방금 찍은 사진이 바로 보인다).
+    /// TODO(검증): `photos-redirect://` 스킴이 iOS 27에서도 사진 앱을 여는지 실기기 확인(비공개 문서화 스킴).
     private var thumbnail: some View {
+        Button {
+            if let url = URL(string: "photos-redirect://") { openURL(url) }
+        } label: {
+            thumbnailImage
+        }
+        .buttonStyle(.plain)
+        .disabled(vm.lastThumbnail == nil)
+        .accessibilityLabel("마지막으로 촬영한 사진")
+        .accessibilityHint("사진 앱을 엽니다")
+    }
+
+    private var thumbnailImage: some View {
         Group {
             if let image = vm.lastThumbnail {
                 Image(uiImage: image)
@@ -244,7 +316,6 @@ struct CaptureView: View {
         .frame(width: 52, height: 52)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(.white.opacity(0.4), lineWidth: 1))
-        .accessibilityLabel("마지막으로 촬영한 사진")
     }
 
     @ViewBuilder

@@ -3,7 +3,7 @@ import CoreImage
 
 /// 인물 보정 단계. `PipelineContext.portraitStage`에 넣는 클로저를 제공한다.
 /// 인물 모드 스위치(앱 상태)가 켜져 있을 때만 `AppServices.pipelineContext(...)`가 이 hook을 넣는다.
-/// R1-S5: 피부 부드럽게·잡티·치아. R1-S6: 얼굴 윤곽·눈 확대 워프.
+/// R1-S5: 피부 부드럽게·잡티·치아. R1-S6: 얼굴 윤곽·눈 확대 워프. R1-S8a: 피부톤 업.
 ///
 /// 순서: **워프 먼저** → 랜드마크·boundingBox를 워프 후 좌표로 옮김 → 피부 보정(마스크가 워프된 얼굴에 맞는다).
 enum PortraitStage {
@@ -42,5 +42,6 @@ enum PortraitStage {
     /// 이번 단계에서 효과가 있는 값이 하나라도 있는지.
     static func isActive(_ params: PortraitParams) -> Bool {
         params.skinSmooth > 0 || params.teethWhiten > 0 || params.faceSlim > 0 || params.eyeEnlarge > 0
+            || params.skinBrighten > 0
     }
 }

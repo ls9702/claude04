@@ -1,4 +1,4 @@
-// 피부 보정 본체: 주파수 분리(저장·앨범) / 가우시안 경량(라이브) 피부 부드럽게 + 잡티 완화 + 치아 미백. 순수 함수.
+// 피부 보정 본체: 주파수 분리(저장·앨범) / 가우시안 경량(라이브) 피부 부드럽게 + 잡티 완화 + 피부톤 업 + 치아 미백. 순수 함수.
 import CoreGraphics
 import CoreImage
 import CoreImage.CIFilterBuiltins
@@ -28,6 +28,10 @@ enum SkinSmoothing {
     /// 치아 미백: 채도 −40%, 노출 +0.15EV.
     static let teethSaturation: Float = 0.6
     static let teethExposureEV: Float = 0.15
+    /// 피부톤 업(강도 100 기준): 노출 +0.4EV, 색온도 +900K 방향(따뜻하게). 마스크 × 강도로 섞는다.
+    /// TODO(실기기): 과하면 EV를 0.3으로.
+    static let brightenExposureEV: Float = 0.4
+    static let brightenWarmKelvin: CGFloat = 900
 
     /// 보정 결과 이미지만 필요할 때.
     static func apply(_ input: CIImage, faces: [DetectedFace], params: PortraitParams,
@@ -36,13 +40,15 @@ enum SkinSmoothing {
     }
 
     /// 보정 결과 + 피부 마스크(4단계 선명도가 마스크 바깥에만 적용되도록 전달).
-    /// faces가 비었거나 피부·치아 강도가 모두 0이면 입력 그대로(같은 객체, 픽셀 동일)와 마스크 nil.
+    /// faces가 비었거나 피부·피부톤·치아 강도가 모두 0이면 입력 그대로(같은 객체, 픽셀 동일)와 마스크 nil.
+    /// 돌려주는 피부 마스크(선명도 제외용)는 피부 부드럽게가 켜져 있을 때만 만든다(피부톤 업만으로는 nil — S5 동작 유지).
     static func process(_ input: CIImage, faces: [DetectedFace], params: PortraitParams,
                         quality: PortraitQuality, kernels: PortraitKernels?) -> PortraitResult {
         let skin = CGFloat(Mapping.clampUnsigned(params.skinSmooth) / 100)
         let teeth = CGFloat(Mapping.clampUnsigned(params.teethWhiten) / 100)
+        let tone = CGFloat(Mapping.clampUnsigned(params.skinBrighten) / 100)
         let extent = input.extent
-        guard !faces.isEmpty, skin > 0 || teeth > 0, !extent.isInfinite, !extent.isEmpty else {
+        guard !faces.isEmpty, skin > 0 || teeth > 0 || tone > 0, !extent.isInfinite, !extent.isEmpty else {
             return PortraitResult(image: input, skinMask: nil)
         }
 
@@ -53,7 +59,12 @@ enum SkinSmoothing {
             let faceWidth = face.boundingBox.width
             guard faceWidth > 0 else { continue }
 
-            if skin > 0, let mask = SkinMask.faceSkinMask(for: face, imageExtent: extent, source: input, kernels: kernels) {
+            // 피부 마스크는 피부 부드럽게·피부톤 업이 함께 쓴다(얼굴당 한 번만 만든다).
+            let mask = (skin > 0 || tone > 0)
+                ? SkinMask.faceSkinMask(for: face, imageExtent: extent, source: input, kernels: kernels)
+                : nil
+
+            if skin > 0, let mask {
                 let region = mask.extent
                 let candidate: CIImage
                 let mix: CGFloat
@@ -73,6 +84,12 @@ enum SkinSmoothing {
                 }
                 image = blend(candidate, over: image, mask: scaleMask(mask, by: mix), extent: extent)
                 skinMasks.append(mask)
+            }
+
+            // 피부톤 업: 부드럽게 한 결과 위에서 피부 영역만 밝고 따뜻하게. 라이브·저장 동일(필터 2개라 가볍다).
+            if tone > 0, let mask {
+                let brightened = brighten(image, region: mask.extent)
+                image = blend(brightened, over: image, mask: scaleMask(mask, by: tone), extent: extent)
             }
 
             if teeth > 0, let mask = SkinMask.teethMask(for: face, imageExtent: extent) {
@@ -119,6 +136,23 @@ enum SkinSmoothing {
     static func liveSmooth(_ input: CIImage, region: CGRect, faceWidth: CGFloat, strength: CGFloat) -> CIImage {
         let radius = max(1, faceWidth * lowRadiusFraction * (0.6 + 0.8 * strength) * liveRadiusRatio)
         return gaussian(input.cropped(to: region), radius: radius, region: region)
+    }
+
+    // MARK: 피부톤 업
+
+    /// 강도 100 기준 후보: 노출 +0.4EV → 색온도 +900K 방향. 결과 extent = region. 강도는 마스크 배율로 준다.
+    /// 색온도 부호 규약은 `EnhancePipeline.applyTemperature`와 같다(neutral을 기준 6500K보다 높이면 따뜻해진다).
+    static func brighten(_ input: CIImage, region: CGRect) -> CIImage {
+        let source = input.cropped(to: region)
+        let e = CIFilter.exposureAdjust()
+        e.inputImage = source
+        e.ev = brightenExposureEV
+        let exposed = e.outputImage ?? source
+        let t = CIFilter.temperatureAndTint()
+        t.inputImage = exposed
+        t.neutral = CIVector(x: CGFloat(Mapping.neutralKelvin) + brightenWarmKelvin, y: 0)
+        t.targetNeutral = CIVector(x: CGFloat(Mapping.neutralKelvin), y: 0)
+        return (t.outputImage ?? exposed).cropped(to: region)
     }
 
     // MARK: 치아

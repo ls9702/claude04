@@ -68,7 +68,7 @@ struct MetalPreviewView: UIViewRepresentable {
 
     /// 뷰의 탭 위치 → `AVCaptureDevice.focusPointOfInterest` 좌표.
     ///
-    /// 가정: 앱 세로 고정, 후면 카메라(미러 없음), 비디오 연결 `videoRotationAngle = 90`(프레임이 세로로 선 상태),
+    /// 가정: 앱 세로 고정, 후면 카메라(미러 없음 — 전면은 `mirrored`), 비디오 연결 `videoRotationAngle = 90`(프레임이 세로로 선 상태),
     /// 프리뷰는 `imageSize` 비율의 프레임을 뷰에 aspect-fill로 그림.
     ///
     /// 유도:
@@ -82,13 +82,19 @@ struct MetalPreviewView: UIViewRepresentable {
     /// 4. 역변환: sx = v, sy = 1 − u. 즉 devicePoint = (v, 1 − u).
     ///    잘림이 없을 때 이는 널리 쓰이는 `(tapY / height, 1 − tapX / width)`와 같다.
     ///    예: 화면 중앙 → (0.5, 0.5), 좌상단 → (0, 1), 우상단 → (0, 0), 좌하단 → (1, 1).
+    /// 5. 미러(전면 카메라, 프리뷰만 좌우 반전): 화면의 가로축(u)이 뒤집혀 보이므로 u → 1 − u 후 같은 식을 쓴다.
+    ///    devicePoint = (v, u). 예: 좌상단 → (0, 0). 세로축(v)은 미러와 무관하다.
+    ///    TODO(검증): 전면 센서 좌표계가 후면과 같은 규약(landscapeRight 기준)인지 실기기에서 확인. 대부분 전면은
+    ///               포커스 POI를 지원하지 않아 노출 POI만 적용된다(`isExposurePointOfInterestSupported`).
     /// 결과는 0~1로 자른다.
     static func devicePoint(fromViewPoint point: CGPoint,
                             viewSize: CGSize,
-                            imageSize: CGSize = CGSize(width: 3, height: 4)) -> CGPoint {
+                            imageSize: CGSize = CGSize(width: 3, height: 4),
+                            mirrored: Bool = false) -> CGPoint {
         guard viewSize.width > 0, viewSize.height > 0 else { return CGPoint(x: 0.5, y: 0.5) }
         let r = fitRect(image: CGRect(origin: .zero, size: imageSize), drawable: viewSize, mode: .fill)
-        let u = (point.x - r.minX) / r.width
+        var u = (point.x - r.minX) / r.width
+        if mirrored { u = 1 - u }
         let v = (point.y - r.minY) / r.height
         func clamp(_ x: CGFloat) -> CGFloat { min(max(x, 0), 1) }
         return CGPoint(x: clamp(v), y: clamp(1 - u))
@@ -133,6 +139,8 @@ struct MetalPreviewView: UIViewRepresentable {
         /// 마지막으로 그린 프레임 크기(탭 좌표 변환용). 기본은 .photo 프리셋의 세로 3:4.
         @MainActor private var lastImageSize = CGSize(width: 3, height: 4)
         @MainActor var onTap: ((CGPoint, CGPoint) -> Void)?
+        /// 프리뷰가 좌우 반전돼 그려지는지(전면 카메라). 탭 좌표 변환에 쓴다. CaptureViewModel이 설정한다.
+        @MainActor var isMirrored = false
 
         override init() {
             let device = MTLCreateSystemDefaultDevice()
@@ -314,7 +322,8 @@ struct MetalPreviewView: UIViewRepresentable {
         @MainActor @objc func handleTap(_ recognizer: UITapGestureRecognizer) {
             guard let v = recognizer.view else { return }
             let p = recognizer.location(in: v)
-            let dp = MetalPreviewView.devicePoint(fromViewPoint: p, viewSize: v.bounds.size, imageSize: lastImageSize)
+            let dp = MetalPreviewView.devicePoint(fromViewPoint: p, viewSize: v.bounds.size,
+                                                  imageSize: lastImageSize, mirrored: isMirrored)
             onTap?(dp, p)
         }
     }

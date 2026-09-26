@@ -45,6 +45,7 @@
 5. 튜닝 값(`PreviewQuality.baseDimension`, `LivePipeline.autoRefreshInterval`, `WarpPlan` 상수, `SkinSmoothing` 상수, 기본 faceSlim)은 직접 바꿔 커밋해도 됨. 이 파일 갱신
 
 ## 논의 필요 (설계 변경 제안·질문)
+- **[결정 09-26] 인물 모드 추가 기능·UX (R1-S8b, S8a 커밋 후 착수)**: F1 강도 3단계 칩(자연/보통/강함, 촬영·앨범), F5 배경 흐림(인물 분리, 저장·앨범만), U1 라이브 얼굴 마커, U2 라이브 전/후(길게 누르기), U3 앨범 얼굴 확대 토글, U4 슬라이더 패널 기본/인물 세그먼트, U5 촬영 화면 인물 버튼 셔터 옆, U6 전면 전환 시 인물 모드 제안. 보류: 얼굴별 개별 조정, 잡티 터치 제거, 눈 또렷하게, 얼굴 밝기 자동. PLAN §3.3 갱신됨
 - **[사용자 요청 09-26] 카메라 렌즈 선택**: 전면 카메라 전환 + 후면 3종(초광각 0.5×·광각 1×·망원 2×) 모두 사용. 현재 `CameraService`는 `.builtInWideAngleCamera`(후면 광각)만 고정(`CameraService.swift:92`). 제안: 후면은 `.builtInTripleCamera` 가상 기기로 바꿔 줌 배율에 따라 자동 렌즈 전환(0.5×/1×/2× 버튼은 `videoZoomFactor`를 `virtualDeviceSwitchOverVideoZoomFactors`에 맞춰 설정), 전면은 `.builtInWideAngleCamera` `.front`로 세션 재구성 + 프리뷰 좌우 반전·`frameOrientation` 처리. 인물 모드 셀피와 직결되므로 R1-S8 범위 권장. PLAN §3.1·§4 갱신 필요
 - **[사용자 요청 09-26] 피부톤 업(인물 모드)**: 피부 마스크 영역만 밝기·따뜻함을 올리는 슬라이더(`PortraitParams.skinBrighten` 0~100 등). S5 피부 마스크(`SkinMask`)를 그대로 쓰면 되고, 피부 보정 단계 뒤에 마스크 한정 노출(+0~0.4EV)·온도(+0~10) 혼합으로 구현 가능. 프리셋 직렬화 호환(기본값 0) 유지. R1-S8 또는 릴리즈 1.1
 - **[사용자 요청 09-26] 촬영 탭 썸네일 → 사진 보관함 열기**: 셔터 옆 마지막 사진 썸네일(`CaptureView.thumbnail`)이 지금은 표시만 하고 탭해도 아무 일 없음. 요청: 탭하면 사진 앱(내 사진 보관함)으로 이동. 구현: `Button`으로 감싸 `openURL(URL(string: "photos-redirect://")!)`(사진 앱 열기) — 해당 사진으로 바로 열리는 공개 API는 없으므로 앱 열기까지. 대안: 앱 내 보정 탭으로 그 사진(`lastCapturedID`)을 넘겨 열기. 작음, R1-S8
@@ -52,4 +53,5 @@
 - **[Mac 관찰 09-26] 라이브 프리뷰 성능**: iPhone 12 Pro 20fps@768px·발열 → BUILD_LOG 튜닝 제안 4건. 설계(PLAN §3.2 "라이브 30fps")에 영향이 있어 여기 적음
 
 ## 결정 이력
+- 09-26 R1-S8을 S8a(성능·렌즈·요청 4건) → S8b(인물 모드 기능·UX) → S8c(백업·경고·오류·아이콘·전체 리뷰)로 분할
 - 09-25 릴리즈 1 = 카메라, 릴리즈 2 = 동영상. 단계별 진행, 주 단위 재개. 각 단계는 클라우드 세션에서 Opus 5.5 서브에이전트 작성 + Fable 리뷰, Mac은 빌드 위주(코드 수정 가능) (`CLAUDE.md`, `PLAN.md` §8·§11)

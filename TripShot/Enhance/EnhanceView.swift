@@ -1,4 +1,4 @@
-// 보정 탭(앨범 보정): 사진 선택 → 프리셋 → 슬라이더 → 전/후(길게 누르기) → 저장(비파괴·사본·일괄). 상태는 EnhanceViewModel.
+// 보정 탭(앨범 보정): 사진 선택 → 프리셋 → 슬라이더 → 전/후(길게 누르기) → 저장(비파괴·사본·일괄) → 닫기(선택 해제). 상태는 EnhanceViewModel.
 import Photos
 import PhotosUI
 import SwiftData
@@ -24,6 +24,7 @@ private struct EnhanceScreen: View {
     @State private var showAdjustments = true
     @State private var showPresetNameAlert = false
     @State private var newPresetName = ""
+    @State private var showClearConfirm = false
     /// 프리뷰를 길게 누르는 동안 true → 원본 표시.
     @GestureState private var isPressingPreview = false
 
@@ -57,9 +58,25 @@ private struct EnhanceScreen: View {
                 }
                 if !vm.items.isEmpty {
                     ToolbarItem(placement: .topBarTrailing) { saveMenu }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        // 선택 해제 → 초기 화면. 직접 조정한 값이 있으면 먼저 확인한다.
+                        Button {
+                            if vm.hasAdjustments {
+                                showClearConfirm = true
+                            } else {
+                                clearSelection()
+                            }
+                        } label: {
+                            Label("닫기", systemImage: "xmark")
+                        }
+                        .disabled(vm.isSaving)
+                        .accessibilityLabel("선택 해제")
+                    }
                 }
             }
             .onChange(of: pickerItems) { _, newItems in
+                // 선택 해제(clearSelection)로 비운 경우: 목록이 이미 비어 있으므로 다시 불러오지 않는다.
+                if newItems.isEmpty && vm.items.isEmpty { return }
                 let identifiers = newItems.map { $0.itemIdentifier }
                 Task { await vm.loadSelection(identifiers: identifiers) }
             }
@@ -73,6 +90,12 @@ private struct EnhanceScreen: View {
                 Button("확인", role: .cancel) {}
             } message: {
                 Text(vm.alertMessage ?? "")
+            }
+            .alert("선택 해제", isPresented: $showClearConfirm) {
+                Button("해제", role: .destructive) { clearSelection() }
+                Button("취소", role: .cancel) {}
+            } message: {
+                Text("선택을 해제하면 조정한 값이 사라집니다")
             }
             .alert("프리셋으로 저장", isPresented: $showPresetNameAlert) {
                 TextField("프리셋 이름", text: $newPresetName)
@@ -98,6 +121,13 @@ private struct EnhanceScreen: View {
                      preferredItemEncoding: .automatic,
                      photoLibrary: .shared(),
                      label: label)
+    }
+
+    /// 사진 선택 해제(PhotosPicker 선택도 비운다). `pickerItems` 변경 → `loadSelection([])`은 권한 요청만 하고 빈 목록을 둔다.
+    private func clearSelection() {
+        guard !vm.isSaving else { return }
+        vm.clearSelection()
+        pickerItems = []
     }
 
     // MARK: 편집 화면
@@ -245,7 +275,7 @@ private struct EnhanceScreen: View {
                 .font(.subheadline.weight(.semibold))
 
                 VStack(alignment: .leading, spacing: 8) {
-                    // 인물 모드 스위치(앱 상태, 촬영 화면과 공유). 켜져 있을 때만 피부·윤곽·눈·치아 슬라이더를 보인다.
+                    // 인물 모드 스위치(앱 상태, 촬영 화면과 공유). 켜져 있을 때만 피부·피부톤·윤곽·눈·치아 슬라이더를 보인다.
                     Toggle(isOn: $services.portraitModeEnabled) {
                         Label("인물 모드", systemImage: "person.crop.circle")
                     }

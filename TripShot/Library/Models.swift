@@ -28,6 +28,28 @@ struct PortraitParams: Codable, Equatable {
     var faceSlim: Double = 20
     var eyeEnlarge: Double = 0
     var teethWhiten: Double = 0
+    /// 피부톤 업(R1-S8a): 피부 마스크 안에서만 밝게·따뜻하게. 0~100, 0이면 효과 없음.
+    var skinBrighten: Double = 0
+
+    enum CodingKeys: String, CodingKey {
+        case enabled, skinSmooth, faceSlim, eyeEnlarge, teethWhiten, skinBrighten
+    }
+}
+
+extension PortraitParams {
+    // 자동 합성 디코더는 기본값이 있어도 키가 반드시 있어야 한다. 필드를 추가해도(예: skinBrighten)
+    // 이전에 저장한 프리셋·편집 JSON이 읽히도록 모든 키를 선택으로 읽고 없으면 기본값을 쓴다.
+    // (extension에 두어 멤버와이즈 이니셜라이저를 유지한다. 인코딩은 합성 그대로.)
+    init(from decoder: Decoder) throws {
+        let defaults = PortraitParams()
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? defaults.enabled
+        skinSmooth = try c.decodeIfPresent(Double.self, forKey: .skinSmooth) ?? defaults.skinSmooth
+        faceSlim = try c.decodeIfPresent(Double.self, forKey: .faceSlim) ?? defaults.faceSlim
+        eyeEnlarge = try c.decodeIfPresent(Double.self, forKey: .eyeEnlarge) ?? defaults.eyeEnlarge
+        teethWhiten = try c.decodeIfPresent(Double.self, forKey: .teethWhiten) ?? defaults.teethWhiten
+        skinBrighten = try c.decodeIfPresent(Double.self, forKey: .skinBrighten) ?? defaults.skinBrighten
+    }
 }
 
 @Model
