@@ -23,6 +23,7 @@ struct TripShotApp: App {
         WindowGroup {
             RootTabView()
                 .environmentObject(services)
+                .environmentObject(services.music)
                 .preferredColorScheme(.dark)
         }
         .modelContainer(container)

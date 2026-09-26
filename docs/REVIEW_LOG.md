@@ -4,6 +4,29 @@
 
 ---
 
+## R3-S5 음원·박자 맞춤·마무리 · 2026-09-27 · 서브에이전트(Opus 5.5) 작성분 · 결과: **통과 (수정 없음)** — 릴리즈 3 체크포인트
+
+### 필수 항목
+- 사진 보관함: 내보내기는 기존 `ShortsAssembler.export` 경로 그대로. 음원은 앱 내부 `Documents/Music/`(설계 §4.6). 충족.
+- 외부 패키지: YouTubeKit만(이미 선언). project.yml 변경 없음.
+- 큐: 다운로드·박자 검출은 백그라운드, SwiftData insert·`@Published`는 메인. 충족.
+- 오류 처리: 링크 오류·스트림 없음·다운로드 실패·추출 실패(YouTube 구조 변경) 모두 문구와 "파일 가져오기" 대체 경로. 음악 파일 삭제 시 `musicUnavailable` → 음악 없이 재조립. 충족.
+- 설계 일치(§4.4·§4.6): 음악 + 끝 페이드아웃 1.5초, 원래 소리 더킹 0.3, 비트 컷 맞춤(±0.25초, 템플릿 bpm ±20%), 클립보드 제안(PasteButton, 사용자 동작 시만 읽음). 충족.
+
+### 잘한 점
+- `snapToBeats`가 전환 겹침을 유지하고 앞 칸 길이만 원본 범위 안에서 조정, 뒤 칸을 그만큼 이동(순수 함수·테스트).
+- 박자 검출을 Python으로 같은 로직을 돌려 사전 검증(120/90/128bpm ±0.1).
+- 기존 `build` 시그니처는 오버로드로 보존(호출부 무변경).
+
+### 실기기 확인 (Mac, 릴리즈 3 체크포인트)
+- YouTubeKit API 이름(`YouTube(videoID:)`, `streams`, `filterAudioOnly()`, `highestAudioBitrateStream()`, `metadata`) — 빌드 오류 시 패키지 소스에서 맞출 것. 실제 링크 가져오기·진행률·제목.
+- 실제 곡 bpm 정확도(드럼 약한 곡은 반/두 배 가능), 90초 분석 시간, 비트 컷 템플릿 청감.
+- 미리듣기가 `AVAudioSession`을 `.playback`으로 바꾼 뒤 카메라·녹화가 오디오 세션을 되찾는지.
+- 음악 포함 내보내기 → 사진 앱 저장(완료 기준), 페이드아웃·더킹 비율.
+
+### 컴파일 확신이 낮은 지점
+- `MusicPreviewPlayer`(`@MainActor` + `AVAudioPlayerDelegate` nonisolated 콜백), `MusicTests.testMusicTrackBeatsRoundTrip`(컨테이너 없이 `@Model` 생성 — 문제 시 제외), `PasteButton(payloadType: URL.self)`.
+
 ## 릴리즈 1 전체 리뷰 · 2026-09-26 · 커밋 4e2729f · 결과: **통과 (필수 위반 없음 · 수정 권고 3건은 Mac 빌드 전후에 처리)**
 
 범위: `TripShot/**/*.swift`·`*.metal`, `TripShotTests/**`, `project.yml` 전체(약 9,100줄). 기준: REVIEW_CHECKLIST 필수 5항+품질, PLAN §3·§5·§8.2, CLAUDE.md 코드 규칙, BUILD_LOG(시뮬레이터 121/121, iPhone 12 Pro 관찰). **주의: babd77c 이후 커밋(S8a·S8b·S8c, 38파일 +4,160/−271)은 아직 Mac에서 빌드되지 않았다.** 아래 "컴파일 의심"은 각 단계 REVIEW_LOG에 이미 적힌 것 밖의 지점만 적었다.

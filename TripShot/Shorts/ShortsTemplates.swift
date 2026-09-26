@@ -110,6 +110,15 @@ struct ShortsTemplate: Identifiable, Equatable {
     }
 }
 
+extension ShortsTemplate {
+    /// 음악 bpm에 맞춘 칸 길이(R3-S5). 칸마다 템플릿 bpm 기준 박 수를 유지한다(1박 = 60/bpm).
+    /// 비트 컷(120bpm, 칸 1초 = 2박)은 음악이 100bpm이면 칸 1.2초(2박). 템플릿 bpm이 없거나 bpm이 0 이하면 원래 길이.
+    func slotSecondsAdjusted(forBPM bpm: Double) -> [Double] {
+        guard let templateBPM = beatsPerMinute, templateBPM > 0, bpm > 0 else { return slots.map(\.seconds) }
+        return slots.map { $0.seconds * templateBPM / bpm }
+    }
+}
+
 enum ShortsTemplateLibrary {
     static func template(for key: String?) -> ShortsTemplate? {
         guard let key else { return nil }

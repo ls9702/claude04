@@ -1,4 +1,4 @@
-// 사용자에게 보이는 오류 문구를 한 곳에서 만든다(원인 + 조치, 한국어). 저장·보정·카메라·백업 오류 공통.
+// 사용자에게 보이는 오류 문구를 한 곳에서 만든다(원인 + 조치, 한국어). 저장·보정·카메라·백업·음원 오류 공통.
 import AVFoundation
 import Foundation
 
@@ -31,6 +31,8 @@ enum UserMessage {
             case .invalidFormat:
                 return "TripShot 백업 파일이 아니거나 손상된 파일입니다."
             }
+        case let e as MusicImportError:
+            return music(e)
         case is DecodingError:
             return "TripShot 백업 파일이 아니거나 손상된 파일입니다."
         default:
@@ -77,6 +79,31 @@ enum UserMessage {
             return "카메라 오류로 프리뷰가 멈췄습니다. 다시 시작을 시도합니다. 계속 멈춰 있으면 다른 탭에 갔다 오거나 앱을 다시 실행해 주세요."
         case .previewStalled:
             return "프리뷰가 1분 넘게 멈췄습니다. 앱을 완전히 닫고 다시 실행해 주세요."
+        }
+    }
+
+    // MARK: 음원(R3-S5)
+
+    /// YouTube 추출이 깨졌을 때 대체 경로 안내(여러 문구에서 같이 쓴다).
+    static let musicFallbackHint = "파일 앱에서 가져오기로 대체하거나, 앱 업데이트(YouTubeKit 갱신) 후 다시 시도해 주세요."
+
+    /// 조립할 때 고른 음악 파일이 사라졌을 때.
+    static let musicMissing = "음악 파일을 찾을 수 없어 음악 없이 내보냅니다. 음원 라이브러리에서 다시 가져와 골라 주세요."
+
+    private static func music(_ e: MusicImportError) -> String {
+        switch e {
+        case .invalidLink:
+            return "YouTube 링크를 알아보지 못했습니다. youtube.com/watch?v=… 또는 youtu.be/… 형태의 링크를 붙여 넣어 주세요."
+        case .noStream:
+            return "이 영상에서 가져올 수 있는 오디오를 찾지 못했습니다(비공개·연령 제한·실시간 영상일 수 있음). " + musicFallbackHint
+        case .downloadFailed(let reason):
+            return "음원을 내려받지 못했습니다(\(reason)). 네트워크 연결을 확인하고 다시 시도해 주세요."
+        case .extractionFailed:
+            return "YouTube에서 음원을 추출하지 못했습니다. YouTube 구조가 바뀌었을 수 있습니다. " + musicFallbackHint
+        case .unreadableFile:
+            return "음원 파일을 읽지 못했습니다. m4a·mp3 같은 오디오 파일인지 확인해 주세요."
+        case .accessDenied:
+            return "파일에 접근하지 못했습니다. 파일 앱에서 기기에 내려받은 뒤 다시 골라 주세요."
         }
     }
 

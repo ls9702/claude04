@@ -257,6 +257,12 @@ final class MusicTrack {
     var durationSeconds: Double
     var sourceURL: String?
     var addedAt: Date
+    /// 박자 검출 결과(R3-S5). nil이면 아직 검출 전이거나 박자를 찾지 못함. 옵셔널 추가라 SwiftData 경량 마이그레이션으로 충분.
+    var bpm: Double? = nil
+    /// 비트 시각 배열(초, 곡 기준) JSON. `beats`로 읽고 쓴다.
+    var beatsJSON: Data? = nil
+    /// 박자 검출을 한 번 시도했는지(실패해도 true — 매번 다시 돌리지 않게).
+    var beatsAnalyzed: Bool = false
 
     init(title: String, fileName: String, durationSeconds: Double, sourceURL: String?) {
         self.id = UUID()
@@ -266,4 +272,13 @@ final class MusicTrack {
         self.sourceURL = sourceURL
         self.addedAt = .now
     }
+
+    /// 비트 시각(초). 없으면 빈 배열.
+    var beats: [Double] {
+        get { beatsJSON.flatMap { try? JSONDecoder().decode([Double].self, from: $0) } ?? [] }
+        set { beatsJSON = newValue.isEmpty ? nil : try? JSONEncoder().encode(newValue) }
+    }
+
+    /// YouTube에서 가져온 곡인지(목록 출처 아이콘).
+    var isFromYouTube: Bool { sourceURL?.isEmpty == false }
 }

@@ -25,6 +25,8 @@ struct RootTabView: View {
 }
 
 #Preview {
-    RootTabView()
-        .environmentObject(AppServices())
+    let services = AppServices()
+    return RootTabView()
+        .environmentObject(services)
+        .environmentObject(services.music)
 }

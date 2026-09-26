@@ -28,6 +28,8 @@ final class AppServices: ObservableObject {
     let renderer: EnhanceRenderer
     let photoSaver: PhotoSaver
     let locationProvider = LocationProvider()
+    /// 음원 라이브러리(R3-S5). 가져오기 뒤 박자 검출이 화면을 벗어나도 이어지도록 앱에 하나. `TripShotApp`이 environmentObject로 주입.
+    let music = MusicLibrary()
     /// 저장·앨범 경로의 얼굴 검출기(상태 없음, 스레드 안전).
     let faceDetector = FaceDetector()
     /// 전신 보정(몸 슬림·다리 길게)용 자세 검출. 저장·앨범 경로에서만 쓴다.
