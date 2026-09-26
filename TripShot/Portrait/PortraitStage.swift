@@ -5,17 +5,22 @@ import CoreImage
 /// 인물 모드 스위치(앱 상태)가 켜져 있을 때만 `AppServices.pipelineContext(...)`가 이 hook을 넣는다.
 /// R1-S5: 피부 부드럽게·잡티·치아. R1-S6: 얼굴 윤곽·눈 확대 워프. R1-S8a: 피부톤 업. R1-S8b: 배경 흐림(저장·앨범만).
 ///
-/// 순서: **워프 먼저** → 랜드마크·boundingBox를 워프 후 좌표로 옮김 → 피부 보정(마스크가 워프된 얼굴에 맞는다) → 배경 흐림.
+/// 순서: **전신 워프(몸 슬림·다리 길게, 저장·앨범만)** → 얼굴 검출 → **얼굴 워프** → 랜드마크·boundingBox를 워프 후 좌표로 옮김 → 피부 보정(마스크가 워프된 얼굴에 맞는다) → 배경 흐림.
 enum PortraitStage {
     /// 저장·앨범용. 호출마다 얼굴을 검출한다(긴 변 1024로 줄여 검출, 좌표는 원본 스케일).
     /// 얼굴이 없으면 워프·피부는 건너뛴다. 배경 흐림(`backgroundBlur > 0`)은 얼굴 검출 결과와 무관하게
     /// 사람 분리로 동작한다(뒷모습·옆모습). 사람도 없으면 입력 그대로 + 마스크 nil.
     /// - Parameter segmentationPreview: 앨범 프리뷰용이면 true(인물 분리 `.balanced`), 저장이면 false(`.accurate`).
-    static func full(detector: FaceDetector, kernels: PortraitKernels?,
+    static func full(detector: FaceDetector, bodyDetector: BodyPoseDetector? = nil, kernels: PortraitKernels?,
                      segmentationPreview: Bool = false) -> (CIImage, PortraitParams) -> PortraitResult {
-        return { image, params in
+        return { input, params in
             // 이번 단계에서 쓰는 강도가 모두 0이면 검출·분리 비용도 쓰지 않는다.
-            guard isActive(params) else { return PortraitResult(image: image, skinMask: nil) }
+            guard isActive(params) else { return PortraitResult(image: input, skinMask: nil) }
+            // 전신 워프를 먼저 해서 얼굴 검출·인물 분리가 워프된 이미지 좌표로 이뤄지게 한다.
+            var image = input
+            if let bodyDetector, BodyShape.isActive(params) {
+                image = BodyShape.apply(image, params: params, detector: bodyDetector, kernel: kernels?.bodyReshape)
+            }
             let faces = isFaceActive(params)
                 ? detector.detect(in: image, detectionMaxDimension: FaceDetector.defaultDetectionMaxDimension)
                 : []
@@ -66,9 +71,9 @@ enum PortraitStage {
         return result
     }
 
-    /// 이번 단계에서 효과가 있는 값이 하나라도 있는지(배경 흐림 포함).
+    /// 이번 단계에서 효과가 있는 값이 하나라도 있는지(배경 흐림·전신 보정 포함).
     static func isActive(_ params: PortraitParams) -> Bool {
-        isFaceActive(params) || params.backgroundBlur > 0
+        isFaceActive(params) || params.backgroundBlur > 0 || BodyShape.isActive(params)
     }
 
     /// 얼굴 검출이 필요한 값(피부·치아·윤곽·눈·피부톤)이 하나라도 있는지.

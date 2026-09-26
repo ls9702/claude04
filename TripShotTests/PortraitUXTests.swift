@@ -102,7 +102,7 @@ final class PortraitUXTests: XCTestCase {
         base.backgroundBlur = 40
         let out = PortraitStrength.effective(base: base, strength: .strong, custom: custom)
         XCTAssertEqual(out.skinSmooth, 77)
-        // Background blur is a per-photo value; it comes from base, not from the custom values.
+        // 배경 흐림은 사진별 값이라 직접 값이 아니라 base를 따른다.
         XCTAssertEqual(out.backgroundBlur, 40)
     }
 

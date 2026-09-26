@@ -1,18 +1,18 @@
-// 앨범 보정 화면의 조정 슬라이더(기본 8종 + 인물 모드의 피부·피부톤·윤곽·눈·치아·배경 흐림). 라벨 더블탭으로 0 리셋.
+// 앨범 보정 화면의 조정 슬라이더(기본 8종 + 인물 모드의 피부·피부톤·윤곽·눈·치아·몸 슬림·다리 길게·배경 흐림). 라벨 더블탭으로 0 리셋.
 import SwiftUI
 
 /// 슬라이더 항목. `keyPath`로 `PresetParams`의 필드와 연결된다.
 enum AdjustmentKind: String, CaseIterable, Identifiable {
     case exposure, contrast, highlights, shadows, temperature, vibrance, sharpness, lowLight
-    /// 인물 모드 전용(`PresetParams.portrait` — 프리셋에 함께 저장된다). 배경 흐림은 저장·앨범에서만 보인다(라이브 미적용).
-    case skin, skinTone, slim, eyes, teeth, backgroundBlur
+    /// 인물 모드 전용(`PresetParams.portrait` — 프리셋에 함께 저장된다). 배경 흐림·몸 슬림·다리 길게는 저장·앨범에서만 보인다(라이브 미적용).
+    case skin, skinTone, slim, eyes, teeth, bodySlim, legs, backgroundBlur
 
     var id: String { rawValue }
 
     /// 기본 조정 8종(저조도는 R1-S7).
     static let basic: [AdjustmentKind] = [.exposure, .contrast, .highlights, .shadows, .temperature, .vibrance, .sharpness, .lowLight]
     /// 인물 모드가 켜져 있을 때만 보이는 항목.
-    static let portrait: [AdjustmentKind] = [.skin, .skinTone, .slim, .eyes, .teeth, .backgroundBlur]
+    static let portrait: [AdjustmentKind] = [.skin, .skinTone, .slim, .eyes, .teeth, .bodySlim, .legs, .backgroundBlur]
 
     var title: String {
         switch self {
@@ -29,6 +29,8 @@ enum AdjustmentKind: String, CaseIterable, Identifiable {
         case .slim: return "윤곽"
         case .eyes: return "눈"
         case .teeth: return "치아"
+        case .bodySlim: return "몸 슬림"
+        case .legs: return "다리 길게"
         case .backgroundBlur: return "배경 흐림"
         }
     }
@@ -48,6 +50,8 @@ enum AdjustmentKind: String, CaseIterable, Identifiable {
         case .slim: return "face.dashed"   // TODO(검증): SF Symbol 이름
         case .eyes: return "eye"
         case .teeth: return "mouth"
+        case .bodySlim: return "figure.stand"
+        case .legs: return "arrow.up.and.down"
         case .backgroundBlur: return "person.crop.rectangle"
         }
     }
@@ -55,7 +59,7 @@ enum AdjustmentKind: String, CaseIterable, Identifiable {
     /// 선명도·저조도·피부·피부톤·윤곽·눈·치아·배경 흐림은 0…100, 나머지는 −100…100 (`Mapping` 입력 범위와 같다).
     var range: ClosedRange<Double> {
         switch self {
-        case .sharpness, .lowLight, .skin, .skinTone, .slim, .eyes, .teeth, .backgroundBlur: return 0...100
+        case .sharpness, .lowLight, .skin, .skinTone, .slim, .eyes, .teeth, .bodySlim, .legs, .backgroundBlur: return 0...100
         default: return -100...100
         }
     }
@@ -76,6 +80,8 @@ enum AdjustmentKind: String, CaseIterable, Identifiable {
         case .slim: return \.portrait.faceSlim
         case .eyes: return \.portrait.eyeEnlarge
         case .teeth: return \.portrait.teethWhiten
+        case .bodySlim: return \.portrait.bodySlim
+        case .legs: return \.portrait.legLengthen
         case .backgroundBlur: return \.portrait.backgroundBlur
         }
     }

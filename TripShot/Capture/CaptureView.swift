@@ -1,4 +1,4 @@
-// 촬영 탭(앱 시작 화면): 라이브 보정 프리뷰(얼굴 마커·길게 눌러 원본·기기 경고 배너·카메라 중단 안내)·렌즈(0.5×/1×/2×·전면 전환)·강도 칩·프리셋 스트립·셔터·인물 버튼·마지막 사진(→ 사진 앱)·후처리 배지.
+// 촬영 탭(앱 시작 화면): 전체화면 9:16 라이브 보정 프리뷰(얼굴 마커·길게 눌러 원본·기기 경고 배너·카메라 중단 안내)·렌즈(0.5×/1×/2×·전면 전환)·강도 칩·프리셋 스트립·셔터·인물 버튼·마지막 사진(→ 사진 앱)·후처리 배지.
 import SwiftData
 import SwiftUI
 
@@ -29,11 +29,20 @@ struct CaptureView: View {
             if permissionDenied {
                 deniedView
             } else {
+                // 전체화면: 9:16 프리뷰를 화면 가운데에 크게 깔고, 상단 바·하단 조작부는 그 위에 반투명으로 얹는다.
+                // 저장 사진도 16:9 포맷(12 Pro 4032×2268)이라 보이는 그대로 저장된다(CameraService.configureFormat).
+                previewArea
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .ignoresSafeArea()
+
                 VStack(spacing: 0) {
                     topBar
-                    previewArea
+                        .background(barGradient(from: .top))
+                    warningBanner
                     Spacer(minLength: 0)
+                    shortsNotice
                     bottomControls
+                        .background(barGradient(from: .bottom).ignoresSafeArea(edges: .bottom))
                 }
             }
 
@@ -52,7 +61,7 @@ struct CaptureView: View {
                         .padding(.horizontal, 14).padding(.vertical, 8)
                         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
                         .padding(.horizontal, 24)
-                        .padding(.bottom, 190)
+                        .padding(.bottom, 300)
                 }
                 .transition(.opacity)
                 .allowsHitTesting(false)
@@ -183,22 +192,39 @@ struct CaptureView: View {
 
     // MARK: 프리뷰
 
-    /// 활성 포맷(4:3)의 사진 비율(세로 3:4) 그대로 보여 준다 → aspect-fill이어도 잘리는 부분이 없어 저장본과 구도가 같다.
+    /// 위·아래 조작부 뒤의 어두운 그라디언트(프리뷰 위에서 글자·버튼이 보이게).
+    private func barGradient(from edge: VerticalEdge) -> some View {
+        LinearGradient(colors: [Color.black.opacity(0.55), Color.black.opacity(0)],
+                       startPoint: edge == .top ? .top : .bottom,
+                       endPoint: edge == .top ? .bottom : .top)
+            .allowsHitTesting(false)
+    }
+
+    @ViewBuilder
+    private var shortsNotice: some View {
+        if mode == .shorts {
+            Text("쇼츠 촬영 보조는 릴리즈 2에서 추가됩니다")
+                .font(.footnote)
+                .padding(.horizontal, 12).padding(.vertical, 6)
+                .background(.ultraThinMaterial, in: Capsule())
+                .padding(.bottom, 8)
+        }
+    }
+
+    /// 세로 9:16(활성 포맷 16:9 = 저장 사진 비율). 프레임이 4:3으로 폴백돼도 aspect-fill이라 화면은 9:16으로 꽉 찬다
+    /// (그때는 저장본 좌우가 화면보다 넓다).
     private var previewArea: some View {
         MetalPreviewView(coordinator: vm.preview) { devicePoint, viewPoint in
             // 원본 보기 중이거나 방금 뗀 탭은 포커스로 쓰지 않는다(길게 누르기와 충돌 방지).
             if vm.focus(at: devicePoint) { showFocus(at: viewPoint) }
         }
-        .aspectRatio(3.0 / 4.0, contentMode: .fit)
+        .aspectRatio(CGFloat(AspectRatio.sixteenByNine.portraitWidthOverHeight), contentMode: .fit)
         .overlay {
             // 라이브 얼굴 마커: 인물 모드에서 얼굴이 잡히면 모서리 표시, 새 얼굴이 나타나고 1초 뒤 사라진다.
             // 프레임은 연결 단계에서 이미 미러돼 있어(전면) 화면과 좌표가 같으므로 x 반전은 하지 않는다.
             // TODO(검증): 전면에서 마커가 얼굴과 좌우 반대로 보이면 mirrored: vm.isFrontCamera로.
             FaceMarkerOverlay(rects: vm.faceMarkers, imageSize: vm.faceMarkerImageSize, mirrored: false)
                 .allowsHitTesting(false)
-        }
-        .overlay(alignment: .top) {
-            warningBanner
         }
         .overlay {
             if let message = vm.interruptionMessage {
@@ -233,15 +259,6 @@ struct CaptureView: View {
                     .frame(width: 72, height: 72)
                     .position(focusPoint)
                     .allowsHitTesting(false)
-            }
-        }
-        .overlay(alignment: .bottom) {
-            if mode == .shorts {
-                Text("쇼츠 촬영 보조는 릴리즈 2에서 추가됩니다")
-                    .font(.footnote)
-                    .padding(.horizontal, 12).padding(.vertical, 6)
-                    .background(.ultraThinMaterial, in: Capsule())
-                    .padding(.bottom, 12)
             }
         }
         .clipped()
@@ -283,7 +300,7 @@ struct CaptureView: View {
                 .background(Self.warningColor(warning.level), in: Capsule())
             }
             .buttonStyle(.plain)
-            .padding(.top, 8)
+            .padding(.top, 4)
             .accessibilityLabel(warning.message)
             .accessibilityHint(collapsed ? "펼치기" : "접기")
         }

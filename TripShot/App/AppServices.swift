@@ -30,6 +30,8 @@ final class AppServices: ObservableObject {
     let locationProvider = LocationProvider()
     /// 저장·앨범 경로의 얼굴 검출기(상태 없음, 스레드 안전).
     let faceDetector = FaceDetector()
+    /// 전신 보정(몸 슬림·다리 길게)용 자세 검출. 저장·앨범 경로에서만 쓴다.
+    let bodyPoseDetector = BodyPoseDetector()
     /// 인물 보정 Metal 커널. 처음 쓸 때 한 번 로드한다. 로드 실패면 nil(피부색 마스크·주파수 분리 없이 폴백).
     /// 실패는 로그만 남기고 UI는 설정 탭 "정보"의 상태 표시로 알린다.
     private(set) lazy var portraitKernels: PortraitKernels? = {
@@ -159,9 +161,11 @@ final class AppServices: ObservableObject {
         if quality == .live, let tracker = liveTracker {
             context.portraitStage = PortraitStage.live(tracker: tracker, kernels: kernels)
         } else {
-            context.portraitStage = PortraitStage.full(detector: faceDetector, kernels: kernels)
+            context.portraitStage = PortraitStage.full(detector: faceDetector, bodyDetector: bodyPoseDetector,
+                                                       kernels: kernels)
             // 앨범 프리뷰(`isPreview = true`로 복사한 컨텍스트)는 배경 분리를 `.balanced`로 한다(EnhancePipeline이 고른다).
-            context.portraitPreviewStage = PortraitStage.full(detector: faceDetector, kernels: kernels,
+            context.portraitPreviewStage = PortraitStage.full(detector: faceDetector, bodyDetector: bodyPoseDetector,
+                                                              kernels: kernels,
                                                               segmentationPreview: true)
         }
         return context

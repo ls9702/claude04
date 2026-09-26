@@ -75,5 +75,37 @@ float2 faceWarp(float4 push0, float4 push1, float4 push2, float4 push3, float4 p
     return p - shift - bulge;
 }
 
+
+// 전신 보정 워프(역방향): 출력 p → 입력 좌표. BodyWarpPlan.sourcePoint(for:)와 같은 식이다.
+// slim = (cx, R, a, 0): 입력 x = x + a·w(y)·(x − cx)·(1 − |x − cx|/R)², |x − cx| ≥ R이면 그대로.
+// slimY = (fullY, zeroY): 슬림 세로 가중치 w — 입력 y가 fullY 아래면 1, zeroY 위면 0, 사이는 smoothstep.
+// legs = (baseY, rampStart, rampWidth, r): 바닥 기준 높이 h가 rampStart 아래면 h·r, 램프에서 r → 1 선형 변화의 적분, 위는 평행 이동.
+float2 bodyReshape(float4 slim, float4 slimY, float4 legs, destination dest) {
+    float2 p = dest.coord();
+    float h = p.y - legs.x;
+    float r = legs.w;
+    float start = legs.y;
+    float w = max(legs.z, 1e-4f);
+    float sh;
+    if (h <= start) {
+        sh = h * r;
+    } else if (h - start < w) {
+        float t = h - start;
+        sh = start * r + r * t + (1.0f - r) * t * t / (2.0f * w);
+    } else {
+        sh = start * r + (r + 1.0f) * w * 0.5f + (h - start - w);
+    }
+    float sy = legs.x + sh;
+
+    float sx = p.x;
+    float d = p.x - slim.x;
+    float u = fabs(d) / max(slim.y, 1e-4f);
+    if (slim.z > 0.0f && u < 1.0f) {
+        float wy = 1.0f - smoothstep(slimY.x, max(slimY.y, slimY.x + 1e-4f), sy);
+        sx = p.x + slim.z * wy * d * (1.0f - u) * (1.0f - u);
+    }
+    return float2(sx, sy);
+}
+
 }
 }

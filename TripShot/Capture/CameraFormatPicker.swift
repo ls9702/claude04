@@ -31,6 +31,8 @@ struct FormatInfo: Equatable {
     var videoArea: Int { width * height }
     /// 이 포맷에서 가능한 가장 큰 사진 면적.
     var maxPhotoArea: Int { maxPhotoDimensions.map(\.area).max() ?? 0 }
+    /// 이 포맷에서 가능한 사진의 가장 긴 변.
+    var maxPhotoLongSide: Int { maxPhotoDimensions.map { max($0.width, $0.height) }.max() ?? 0 }
 }
 
 /// 정수 픽셀 크기(`CMVideoDimensions`의 값 사본).
@@ -51,25 +53,28 @@ enum CameraFormatPicker {
 
     /// 조건에 맞는 포맷의 인덱스. 없으면 nil(호출 측은 `.photo` 프리셋으로 폴백).
     ///
-    /// 조건: 4:3, 비디오 1920×1440 이하, `frameRate` fps 지원.
-    /// 순위: (1) 전체 포맷 중 가장 큰 사진 크기를 지원 → (2) 비디오 면적이 큰 것 → (3) 비닝 아님 → (4) 풀 레인지 → (5) 앞쪽 인덱스.
-    /// - Parameter requireFullPhoto: true면 가장 큰 사진 크기를 지원하지 않는 포맷은 아예 제외한다
-    ///   (사진 해상도를 잃느니 `.photo` 폴백이 낫다 — 카메라 서비스는 true로 부른다).
-    static func pick(formats: [FormatInfo], frameRate: Double = 30, requireFullPhoto: Bool = false) -> Int? {
-        let bestPhotoArea = formats.map(\.maxPhotoArea).max() ?? 0
+    /// 조건: `aspect` 비율(기본 4:3, 촬영 탭은 16:9), 비디오 1920×1440 이하, `frameRate` fps 지원.
+    /// 순위: (1) 같은 비율 포맷 중 가장 큰 사진 크기를 지원 → (2) 비디오 면적이 큰 것 → (3) 비닝 아님 → (4) 풀 레인지 → (5) 앞쪽 인덱스.
+    /// - Parameter aspect: (긴 변, 짧은 변) 비율. 16:9 포맷은 사진도 16:9(12 Pro 4032×2268)로 찍힌다.
+    /// - Parameter requireFullPhoto: true면 사진 긴 변이 전체 포맷 중 가장 긴 사진 긴 변보다 짧은 포맷은 제외한다
+    ///   (사진 해상도를 잃느니 폴백이 낫다 — 카메라 서비스는 true로 부른다). 16:9는 긴 변(4032)으로 비교한다.
+    static func pick(formats: [FormatInfo], frameRate: Double = 30, requireFullPhoto: Bool = false,
+                     aspect: AspectRatio = .fourByThree) -> Int? {
+        let bestLongSide = formats.map(\.maxPhotoLongSide).max() ?? 0
         let candidates = formats.indices.filter { i in
             let f = formats[i]
             let long = max(f.width, f.height), short = min(f.width, f.height)
             guard long > 0, short > 0 else { return false }
-            guard long * 3 == short * 4 else { return false }                         // 4:3
+            guard long * aspect.short == short * aspect.long else { return false }
             guard long <= maxVideoLongSide, short <= maxVideoShortSide else { return false }
             guard f.maxFrameRate + 0.01 >= frameRate else { return false }
-            if requireFullPhoto && f.maxPhotoArea < bestPhotoArea { return false }
+            if requireFullPhoto && f.maxPhotoLongSide < bestLongSide { return false }
             return true
         }
+        let bestCandidateArea = candidates.map { formats[$0].maxPhotoArea }.max() ?? 0
         return candidates.min { a, b in
             let fa = formats[a], fb = formats[b]
-            let fullA = fa.maxPhotoArea >= bestPhotoArea, fullB = fb.maxPhotoArea >= bestPhotoArea
+            let fullA = fa.maxPhotoArea >= bestCandidateArea, fullB = fb.maxPhotoArea >= bestCandidateArea
             if fullA != fullB { return fullA }
             if fa.videoArea != fb.videoArea { return fa.videoArea > fb.videoArea }
             if fa.isBinned != fb.isBinned { return !fa.isBinned }
@@ -78,10 +83,33 @@ enum CameraFormatPicker {
         }
     }
 
-    /// 사진 최대 크기 목록 중 면적이 가장 큰 것.
-    static func largestPhotoDimensions(_ dims: [PixelSize]) -> PixelSize? {
-        dims.max { $0.area < $1.area }
+    /// 사진 최대 크기 목록 중 면적이 가장 큰 것. `aspect`를 주면 그 비율인 것 중에서 고르고, 없으면 전체에서.
+    static func largestPhotoDimensions(_ dims: [PixelSize], aspect: AspectRatio? = nil) -> PixelSize? {
+        if let aspect {
+            let matching = dims.filter { aspect.matches($0) }
+            if let best = matching.max(by: { $0.area < $1.area }) { return best }
+        }
+        return dims.max { $0.area < $1.area }
     }
+}
+
+/// 가로:세로 비율(긴 변 : 짧은 변). 방향과 무관하게 비교한다.
+struct AspectRatio: Equatable {
+    var long: Int
+    var short: Int
+
+    static let fourByThree = AspectRatio(long: 4, short: 3)
+    static let sixteenByNine = AspectRatio(long: 16, short: 9)
+
+    /// 크기가 이 비율인지. 4032×2268처럼 정수로 딱 떨어지지 않는 센서 크기도 있어 1% 오차를 허용한다.
+    func matches(_ size: PixelSize) -> Bool {
+        let l = max(size.width, size.height), s = min(size.width, size.height)
+        guard l > 0, s > 0 else { return false }
+        return abs(Double(l) * Double(short) - Double(s) * Double(long)) <= 0.01 * Double(s) * Double(long)
+    }
+
+    /// 세로 화면 기준 가로/세로(예: 16:9 → 9/16).
+    var portraitWidthOverHeight: Double { Double(short) / Double(long) }
 }
 
 // MARK: - 렌즈 배율

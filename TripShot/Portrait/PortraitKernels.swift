@@ -11,11 +11,15 @@ final class PortraitKernels: @unchecked Sendable {
     let frequencyCombine: CIColorKernel
     /// 얼굴 윤곽·눈 워프(R1-S6). 이것만 로드에 실패하면 nil → 워프만 건너뛰고 피부 보정은 그대로 동작한다.
     let faceWarp: CIWarpKernel?
+    /// 전신 보정 워프(몸 슬림·다리 길게). 로드에 실패하면 nil → 전신 보정만 건너뛴다.
+    let bodyReshape: CIWarpKernel?
 
-    init(skinLikelihood: CIColorKernel, frequencyCombine: CIColorKernel, faceWarp: CIWarpKernel? = nil) {
+    init(skinLikelihood: CIColorKernel, frequencyCombine: CIColorKernel, faceWarp: CIWarpKernel? = nil,
+         bodyReshape: CIWarpKernel? = nil) {
         self.skinLikelihood = skinLikelihood
         self.frequencyCombine = frequencyCombine
         self.faceWarp = faceWarp
+        self.bodyReshape = bodyReshape
     }
 
     /// 번들의 default.metallib에서 로드. 파일이 없거나 커널이 없으면 nil(피부색 마스크·주파수 분리 없이 폴백).
@@ -29,7 +33,8 @@ final class PortraitKernels: @unchecked Sendable {
             let combine = try CIColorKernel(functionName: "frequencyCombine", fromMetalLibraryData: data)
             // 워프 커널은 따로 시도한다(실패해도 기존 두 커널은 살린다).
             let warp = try? CIWarpKernel(functionName: "faceWarp", fromMetalLibraryData: data)
-            return PortraitKernels(skinLikelihood: skin, frequencyCombine: combine, faceWarp: warp)
+            let body = try? CIWarpKernel(functionName: "bodyReshape", fromMetalLibraryData: data)
+            return PortraitKernels(skinLikelihood: skin, frequencyCombine: combine, faceWarp: warp, bodyReshape: body)
         } catch {
             return nil
         }

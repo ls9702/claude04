@@ -62,6 +62,8 @@ final class CameraService: NSObject, ObservableObject {
     private let sessionQueue = DispatchQueue(label: "tripshot.camera.session")
     private let videoQueue = DispatchQueue(label: "tripshot.camera.video", qos: .userInteractive)
     private let photoOutput = AVCapturePhotoOutput()
+    /// 지금 활성 포맷의 비율(세션 큐에서만 읽고 쓴다). 16:9 포맷을 못 고르면 4:3.
+    private var activeAspect: AspectRatio = .sixteenByNine
     private let videoOutput = AVCaptureVideoDataOutput()
     private var videoInput: AVCaptureDeviceInput?
     private var configured = false
@@ -327,17 +329,27 @@ final class CameraService: NSObject, ObservableObject {
     private func configureFormat(for device: AVCaptureDevice) {
         let formats = device.formats
         let infos = formats.map(Self.formatInfo)
-        // 30fps 기준으로 고른다(24fps 선택 시에도 30fps 포맷은 24를 지원한다). 사진 풀해상도를 잃는 포맷은 제외.
-        if let index = CameraFormatPicker.pick(formats: infos, frameRate: 30, requireFullPhoto: true),
+        // 30fps 기준으로 고른다(24fps 선택 시에도 30fps 포맷은 24를 지원한다). 사진 풀해상도(긴 변)를 잃는 포맷은 제외.
+        // 촬영 탭은 전체화면 9:16이라 16:9 포맷을 먼저 찾고(사진도 16:9), 없으면 4:3으로 폴백한다.
+        var picked: (index: Int, aspect: AspectRatio)?
+        for aspect in [AspectRatio.sixteenByNine, .fourByThree] {
+            if let index = CameraFormatPicker.pick(formats: infos, frameRate: 30, requireFullPhoto: true, aspect: aspect) {
+                picked = (index, aspect)
+                break
+            }
+        }
+        if let (index, aspect) = picked,
            (try? device.lockForConfiguration()) != nil {
             // activeFormat을 설정하면 세션 프리셋은 자동으로 .inputPriority가 된다.
             device.activeFormat = formats[index]
             device.unlockForConfiguration()
+            activeAspect = aspect
             let info = infos[index]
-            let photo = CameraFormatPicker.largestPhotoDimensions(info.maxPhotoDimensions) ?? PixelSize(width: 0, height: 0)
+            let photo = CameraFormatPicker.largestPhotoDimensions(info.maxPhotoDimensions, aspect: aspect) ?? PixelSize(width: 0, height: 0)
             let summary = "\(info.width)x\(info.height) 최대 \(Int(info.maxFrameRate))fps, 사진 \(photo.width)x\(photo.height), binned=\(info.isBinned)"
             Self.log.notice("활성 포맷 \(summary, privacy: .public)")
         } else {
+            activeAspect = .fourByThree
             if session.canSetSessionPreset(.photo) { session.sessionPreset = .photo }
             Self.log.notice("조건에 맞는 활성 포맷이 없어 .photo 프리셋으로 폴백")
         }
@@ -405,8 +417,11 @@ final class CameraService: NSObject, ObservableObject {
     private func finishDeviceSetup(_ device: AVCaptureDevice) {
         // 사진은 활성 포맷이 허용하는 가장 큰 크기(12 Pro: 4032×3024)로. 값은 반드시 이 목록 안의 것이어야 한다.
         // 시그니처(iOS 16+): AVCapturePhotoOutput.maxPhotoDimensions: CMVideoDimensions
+        // 16:9 포맷이면 16:9 사진(12 Pro 4032×2268) 중 가장 큰 것.
         let photoDims = device.activeFormat.supportedMaxPhotoDimensions
-        if let best = photoDims.max(by: { Int($0.width) * Int($0.height) < Int($1.width) * Int($1.height) }) {
+        let sizes = photoDims.map { PixelSize(width: Int($0.width), height: Int($0.height)) }
+        if let bestSize = CameraFormatPicker.largestPhotoDimensions(sizes, aspect: activeAspect),
+           let best = photoDims.first(where: { Int($0.width) == bestSize.width && Int($0.height) == bestSize.height }) {
             photoOutput.maxPhotoDimensions = best
             Self.log.notice("사진 최대 크기 \(Int(best.width))x\(Int(best.height))")
         }

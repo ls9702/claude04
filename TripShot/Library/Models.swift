@@ -32,9 +32,13 @@ struct PortraitParams: Codable, Equatable {
     var skinBrighten: Double = 0
     /// 배경 흐림(R1-S8b): Vision 인물 분리로 사람 바깥만 흐린다. 0~100, 0이면 효과 없음. 저장·앨범에서만(라이브 미적용).
     var backgroundBlur: Double = 0
+    /// 몸 슬림(전신 보정): Vision 몸 자세로 찾은 몸 중심선 쪽으로 가로를 좁힌다. 0~100, 0이면 효과 없음. 저장·앨범에서만.
+    var bodySlim: Double = 0
+    /// 다리 길게(전신 보정): 엉덩이 아래를 세로로 늘린다(발목이 잡힌 전신 사진에서만). 0~100, 0이면 효과 없음. 저장·앨범에서만.
+    var legLengthen: Double = 0
 
     enum CodingKeys: String, CodingKey {
-        case enabled, skinSmooth, faceSlim, eyeEnlarge, teethWhiten, skinBrighten, backgroundBlur
+        case enabled, skinSmooth, faceSlim, eyeEnlarge, teethWhiten, skinBrighten, backgroundBlur, bodySlim, legLengthen
     }
 }
 
@@ -52,6 +56,8 @@ extension PortraitParams {
         teethWhiten = try c.decodeIfPresent(Double.self, forKey: .teethWhiten) ?? defaults.teethWhiten
         skinBrighten = try c.decodeIfPresent(Double.self, forKey: .skinBrighten) ?? defaults.skinBrighten
         backgroundBlur = try c.decodeIfPresent(Double.self, forKey: .backgroundBlur) ?? defaults.backgroundBlur
+        bodySlim = try c.decodeIfPresent(Double.self, forKey: .bodySlim) ?? defaults.bodySlim
+        legLengthen = try c.decodeIfPresent(Double.self, forKey: .legLengthen) ?? defaults.legLengthen
     }
 }
 

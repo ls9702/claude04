@@ -11,6 +11,17 @@
 
 ---
 
+## 2026-09-26 16:40 · 커밋 16bbac0 → (이번 커밋) · build.sh | test.sh | install-device.sh · 릴리즈 1 체크포인트 1차 + 사용자 요청 2건
+결과: **성공** (build 오류 0 · test **215/215** — 릴리즈 1 체크포인트 197/197 확인 후 새 테스트 18개 추가). 실기기 설치 완료, 실기기 관찰은 진행 중
+환경: macOS 26.6.2, Xcode 27.0, iOS 27.0 시뮬레이터 iPhone 17 / iPhone 12 Pro iOS 27.0
+오류 요약 (Mac에서 수정, `fix(R1-S8c)` 16bbac0):
+- `PortraitUXTests.testEffectivePortraitCustomWinsOverStrength` — 988d8f4(배경 흐림을 칩·직접 값과 분리)에 테스트 기대값이 안 따라감(0 ≠ 15). 코드가 맞고 테스트를 갱신
+- `scripts/test.sh` — 테스트가 하나라도 실패하면 xcodebuild가 `simctl diagnose`로 진단 수집하다 600초 타임아웃까지 멈춤 → `-collect-test-diagnostics never`. 이후 테스트 전체 19초
+사용자 요청으로 Mac에서 바로 반영(설계 변경 — HANDOFF 결정 이력에 기록):
+- **촬영 화면 전체화면**: 9:16 프리뷰를 화면 가운데 크게, 상단 바·하단 조작부는 그라디언트 위 오버레이. 카메라는 **16:9 활성 포맷**(1920×1080, 사진 4032×2268)을 먼저 고르고 없으면 4:3 폴백(`CameraFormatPicker.pick(aspect:)`, `AspectRatio`). 저장본 = 화면 구도. 프리뷰 프레임이 1440×1920 → 1080×1920으로 작아져 fps·발열 개선 기대
+- **전신 보정(몸 슬림·다리 길게)**: `Portrait/BodyShape.swift` + Metal `bodyReshape` 워프 커널. Vision `VNDetectHumanBodyPoseRequest`로 어깨·엉덩이·발목 → 엉덩이 아래 세로 최대 +10%(머리가 잘리지 않게 제한, 발목·무릎이 없으면 안 함), 몸 중심선 쪽 가로 최대 약 11% 좁힘(어깨 위로 서서히 0). 강도 칩 자연 15/20·보통 30/40·강함 50/60, 앨범 인물 패널 슬라이더 2개. **저장·앨범 전용**(라이브 미적용)
+실기기 확인할 것: 콘솔 "활성 포맷 1920x1080 … 사진 4032x2268", 촬영 사진 크기 4032x2268, 프리뷰 fps, 전체화면 레이아웃(버튼 가림·토스트 위치), 전신 사진 저장 결과(배경 세로선 휨·바닥 늘어남 정도), 강도별 자연스러움
+
 ## 2026-09-26 14:30 · 커밋 babd77c · install-device.sh · **iPhone 12 Pro 첫 설치·실기기 관찰**
 결과: **성공** — 설치·실행 정상. 실기기 관찰 아래. 저조도(C)는 주간이라 미측정
 환경: iPhone 12 Pro (iPhone13,3) iOS 27.0, 개발자 모드 켬, 무료 서명(Personal Team, 7일). Xcode 27.0 명령줄 빌드가 인증서·프로파일 자동 생성
