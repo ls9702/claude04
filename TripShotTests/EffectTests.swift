@@ -61,14 +61,14 @@ final class EffectTests: XCTestCase {
             .composited(over: CIImage(color: .black).cropped(to: extent))
     }
 
-    func testFortyEffectsByCategory() {
-        XCTAssertEqual(EffectKind.allCases.count, 40)
-        XCTAssertEqual(Set(EffectKind.allCases.map(\.title)).count, 40, "타일 이름 중복 없음")
+    func testEffectsByCategory() {
+        XCTAssertEqual(EffectKind.allCases.count, 60)
+        XCTAssertEqual(Set(EffectKind.allCases.map(\.title)).count, 60, "타일 이름 중복 없음")
         let counts = Dictionary(grouping: EffectKind.allCases, by: \.category).mapValues(\.count)
         XCTAssertEqual(counts[.sticker], 16)
         XCTAssertEqual(counts[.face], 6)
-        XCTAssertEqual(counts[.lens], 12)
-        XCTAssertEqual(counts[.style], 6)
+        XCTAssertEqual(counts[.lens], 22)
+        XCTAssertEqual(counts[.style], 16)
     }
 
     func testStickerAssetsLoad() {
@@ -143,7 +143,27 @@ final class EffectTests: XCTestCase {
             "CIVortexDistortion": ["inputCenter", "inputRadius", "inputAngle"],
             "CIColorPosterize": ["inputLevels"],
             "CIColorMonochrome": ["inputColor", "inputIntensity"],
+            "CICircleSplashDistortion": ["inputCenter", "inputRadius"],
+            "CIDroste": ["inputInsetPoint0", "inputInsetPoint1", "inputStrands", "inputPeriodicity", "inputRotation", "inputZoom"],
+            "CITriangleKaleidoscope": ["inputPoint", "inputSize", "inputRotation", "inputDecay"],
+            "CIEightfoldReflectedTile": ["inputCenter", "inputAngle", "inputWidth"],
+            "CIEdges": ["inputIntensity"],
+            "CIBloom": ["inputRadius", "inputIntensity"],
+            "CISepiaTone": ["inputIntensity"],
+            "CIVignette": ["inputIntensity", "inputRadius"],
+            "CIPixellate": ["inputCenter", "inputScale"],
+            "CIPointillize": ["inputRadius", "inputCenter"],
+            "CICMYKHalftone": ["inputCenter", "inputWidth", "inputAngle", "inputSharpness"],
+            "CICrystallize": ["inputRadius", "inputCenter"],
         ]
+        for name in ["CIXRay", "CIPhotoEffectMono", "CIPhotoEffectNoir", "CIPhotoEffectInstant", "CIColorInvert",
+                     "CIMultiplyCompositing", "CISubtractBlendMode", "CISoftLightBlendMode", "CIRandomGenerator",
+                     "CIAdditionCompositing"] {
+            XCTAssertNotNil(CIFilter(name: name), name)
+        }
+        let warps = EffectWarpKernels.shared
+        XCTAssertNotNil(warps.ripple); XCTAssertNotNil(warps.wave)
+        XCTAssertNotNil(warps.crystalBall); XCTAssertNotNil(warps.cylinder)
         for (name, keys) in expected {
             let inputKeys = Set(CIFilter(name: name)?.inputKeys ?? [])
             for key in keys { XCTAssertTrue(inputKeys.contains(key), "\(name).\(key)") }

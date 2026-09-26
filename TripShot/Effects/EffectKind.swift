@@ -11,11 +11,13 @@ enum EffectKind: String, CaseIterable, Identifiable, Codable {
     case sunglasses, nerdGlasses, ribbon, topHat, gradCap, butterflies, angelHalo, devilHorns
     // 얼굴 6
     case bigEyes, bigMouth, faceSwap, balloonFace, tinyFace, alien
-    // 렌즈 12
+    // 렌즈 22
     case bulge, pinch, twirl, mirror, fisheye, lightTunnel
     case mirrorVertical, kaleidoscope, glassRing, blackHole, stretch, vortex
-    // 스타일 6
+    case ripple, wave, crystalBall, cylinder, splash, droste, triangleKaleido, eightfold, quadMirror, magnifier
+    // 스타일 16
     case comic, thermal, backgroundSwap, popArt, colorPoint, snowfall
+    case xray, sketch, neon, vintage, noir, mosaic, pointillism, halftone, crystallize, glitch
 
     var id: String { rawValue }
 
@@ -31,9 +33,11 @@ enum EffectKind: String, CaseIterable, Identifiable, Codable {
         case .bigEyes, .bigMouth, .faceSwap, .balloonFace, .tinyFace, .alien:
             return .face
         case .bulge, .pinch, .twirl, .mirror, .fisheye, .lightTunnel,
-             .mirrorVertical, .kaleidoscope, .glassRing, .blackHole, .stretch, .vortex:
+             .mirrorVertical, .kaleidoscope, .glassRing, .blackHole, .stretch, .vortex,
+             .ripple, .wave, .crystalBall, .cylinder, .splash, .droste, .triangleKaleido, .eightfold, .quadMirror, .magnifier:
             return .lens
-        case .comic, .thermal, .backgroundSwap, .popArt, .colorPoint, .snowfall:
+        case .comic, .thermal, .backgroundSwap, .popArt, .colorPoint, .snowfall,
+             .xray, .sketch, .neon, .vintage, .noir, .mosaic, .pointillism, .halftone, .crystallize, .glitch:
             return .style
         }
     }
@@ -80,6 +84,26 @@ enum EffectKind: String, CaseIterable, Identifiable, Codable {
         case .popArt: return "팝아트"
         case .colorPoint: return "컬러포인트"
         case .snowfall: return "눈내림"
+        case .ripple: return "물결"
+        case .wave: return "일렁임"
+        case .crystalBall: return "수정구슬"
+        case .cylinder: return "원통"
+        case .splash: return "스플래시"
+        case .droste: return "무한반복"
+        case .triangleKaleido: return "삼각만화경"
+        case .eightfold: return "8방거울"
+        case .quadMirror: return "4분할거울"
+        case .magnifier: return "돋보기"
+        case .xray: return "X레이"
+        case .sketch: return "스케치"
+        case .neon: return "네온"
+        case .vintage: return "빈티지"
+        case .noir: return "느와르"
+        case .mosaic: return "모자이크"
+        case .pointillism: return "점묘화"
+        case .halftone: return "하프톤"
+        case .crystallize: return "크리스탈"
+        case .glitch: return "글리치"
         }
     }
 
@@ -150,6 +174,26 @@ enum EffectKind: String, CaseIterable, Identifiable, Codable {
         case .popArt: return "🎨"
         case .colorPoint: return "🎯"
         case .snowfall: return "☃️"
+        case .ripple: return "💧"
+        case .wave: return "🌊"
+        case .crystalBall: return "🪩"
+        case .cylinder: return "🥫"
+        case .splash: return "💦"
+        case .droste: return "♾️"
+        case .triangleKaleido: return "🔺"
+        case .eightfold: return "✳️"
+        case .quadMirror: return "🪟"
+        case .magnifier: return "🔍"
+        case .xray: return "🩻"
+        case .sketch: return "✏️"
+        case .neon: return "🌃"
+        case .vintage: return "📷"
+        case .noir: return "🎬"
+        case .mosaic: return "🟦"
+        case .pointillism: return "🖌️"
+        case .halftone: return "🔘"
+        case .crystallize: return "💎"
+        case .glitch: return "📺"
         }
     }
 
@@ -196,6 +240,26 @@ enum EffectKind: String, CaseIterable, Identifiable, Codable {
         case .popArt: return "네 칸 팝아트"
         case .colorPoint: return "사람만 컬러, 배경은 흑백"
         case .snowfall: return "눈송이가 내림"
+        case .ripple: return "얼굴에서 퍼지는 동심원 물결"
+        case .wave: return "물속처럼 좌우로 일렁임"
+        case .crystalBall: return "뒤집힌 상이 비치는 수정 구슬"
+        case .cylinder: return "원통에 감긴 듯 가운데가 커짐"
+        case .splash: return "가장자리가 물보라처럼 퍼짐"
+        case .droste: return "끝없이 안으로 말려 들어감"
+        case .triangleKaleido: return "세모 조각 만화경"
+        case .eightfold: return "여덟 방향 반사 무늬"
+        case .quadMirror: return "위아래·좌우 모두 대칭"
+        case .magnifier: return "얼굴 부분만 크게 보는 돋보기"
+        case .xray: return "엑스레이 사진"
+        case .sketch: return "연필 스케치"
+        case .neon: return "어둠 속 네온 윤곽선"
+        case .vintage: return "빛바랜 필름 사진"
+        case .noir: return "흑백 영화"
+        case .mosaic: return "큰 픽셀 모자이크"
+        case .pointillism: return "점으로 찍은 그림"
+        case .halftone: return "인쇄물 망점"
+        case .crystallize: return "크리스탈 조각"
+        case .glitch: return "화면 깨짐·색 번짐"
         }
     }
 
@@ -205,7 +269,8 @@ enum EffectKind: String, CaseIterable, Identifiable, Codable {
         case .sticker, .face: return true
         case .lens:
             switch self {
-            case .bulge, .pinch, .twirl, .lightTunnel, .glassRing, .blackHole, .vortex, .kaleidoscope: return true
+            case .bulge, .pinch, .twirl, .lightTunnel, .glassRing, .blackHole, .vortex, .kaleidoscope,
+                 .ripple, .crystalBall, .splash, .magnifier, .droste: return true
             default: return false
             }
         case .style: return false

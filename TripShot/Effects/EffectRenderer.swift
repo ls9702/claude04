@@ -69,7 +69,7 @@ enum EffectRenderer {
                 out = filter("CIVortexDistortion", image, [kCIInputCenterKey: CIVector(cgPoint: center),
                                                            kCIInputRadiusKey: minSide * 0.45, kCIInputAngleKey: 56.0])
             default:
-                out = image
+                out = moreLens(kind, image, center: center, time: input.time)
             }
         case .style:
             switch kind {
@@ -79,7 +79,7 @@ enum EffectRenderer {
             case .popArt: out = popArt(image)
             case .colorPoint: out = colorPoint(image, mask: input.personMask)
             case .snowfall: out = snowfall(image, time: input.time)
-            default: out = image
+            default: out = moreStyle(kind, image, time: input.time)
             }
         }
         return out.cropped(to: extent)
@@ -224,9 +224,10 @@ enum EffectRenderer {
     }
 
     /// 이름으로 필터를 만든다. 가장자리가 투명해지지 않게 입력을 확장하고, 결과는 호출 측이 원래 영역으로 자른다.
-    static func filter(_ name: String, _ image: CIImage, _ params: [String: Any]) -> CIImage {
+    /// `clampInput`: 가장자리 확장 입력을 쓸지. CIDroste는 무한 크기 입력이면 출력이 nil이라 false로 부른다.
+    static func filter(_ name: String, _ image: CIImage, _ params: [String: Any], clampInput: Bool = true) -> CIImage {
         guard let f = CIFilter(name: name) else { return image }
-        f.setValue(image.clampedToExtent(), forKey: kCIInputImageKey)
+        f.setValue(clampInput ? image.clampedToExtent() : image, forKey: kCIInputImageKey)
         // 없는 키에 setValue하면 예외로 앱이 죽는다 → 필터가 가진 키만 넣는다.
         let keys = Set(f.inputKeys)
         for (key, value) in params where keys.contains(key) { f.setValue(value, forKey: key) }
@@ -294,6 +295,179 @@ enum EffectRenderer {
                 .composited(over: result)
         }
         return result
+    }
+
+    // MARK: 렌즈 추가 10종
+
+    static func moreLens(_ kind: EffectKind, _ image: CIImage, center: CGPoint, time: Double) -> CIImage {
+        let e = image.extent
+        let minSide = min(e.width, e.height)
+        let K = EffectWarpKernels.shared
+        switch kind {
+        case .ripple:
+            let amp = minSide * 0.018
+            return EffectWarpKernels.warp(K.ripple, image, maxShift: amp, arguments: [
+                CIVector(cgPoint: center),
+                CIVector(x: amp, y: minSide * 0.08, z: CGFloat(time * 4), w: minSide * 0.6),
+            ])
+        case .wave:
+            let amp = minSide * 0.025
+            return EffectWarpKernels.warp(K.wave, image, maxShift: amp, arguments: [
+                CIVector(x: amp, y: minSide * 0.25, z: CGFloat(time * 2.5), w: 0),
+            ])
+        case .crystalBall:
+            let r = minSide * 0.42
+            let ball = EffectWarpKernels.warp(K.crystalBall, image, maxShift: r * 2.5, arguments: [
+                CIVector(cgPoint: center), CIVector(x: r, y: 0),
+            ])
+            // 구슬 밖은 살짝 어둡게, 테두리에 하이라이트.
+            let dim = filter("CIColorControls", image, [kCIInputBrightnessKey: -0.25, kCIInputSaturationKey: 0.6])
+            let inside = circleMask(center: center, radius: r, feather: 2)
+            var result = blend(ball, over: dim, mask: inside)
+            let rim = CIFilter(name: "CIRadialGradient", parameters: [
+                kCIInputCenterKey: CIVector(cgPoint: center), "inputRadius0": r * 0.9, "inputRadius1": r,
+                "inputColor0": CIColor(red: 1, green: 1, blue: 1, alpha: 0), "inputColor1": CIColor(red: 1, green: 1, blue: 1, alpha: 0.45),
+            ])?.outputImage?.cropped(to: CGRect(x: center.x - r, y: center.y - r, width: 2 * r, height: 2 * r))
+            if let rim { result = blend(rim.composited(over: result), over: result, mask: inside) }
+            return result
+        case .cylinder:
+            return EffectWarpKernels.warp(K.cylinder, image, maxShift: e.width / 2, arguments: [
+                CIVector(x: e.midX, y: e.width / 2),
+            ])
+        case .splash:
+            return filter("CICircleSplashDistortion", image, [kCIInputCenterKey: CIVector(cgPoint: center),
+                                                              kCIInputRadiusKey: minSide * 0.38])
+        case .droste:
+            let w = e.width * 0.2, h = e.height * 0.2
+            return filter("CIDroste", image, [
+                "inputInsetPoint0": CIVector(x: center.x - w, y: center.y - h),
+                "inputInsetPoint1": CIVector(x: center.x + w, y: center.y + h),
+                "inputStrands": 1.0, "inputPeriodicity": 1.0, "inputRotation": 0.0, "inputZoom": 1.0,
+            ], clampInput: false)
+        case .triangleKaleido:
+            return filter("CITriangleKaleidoscope", image, [
+                "inputPoint": CIVector(x: e.midX, y: e.midY), "inputSize": minSide * 0.5,
+                "inputRotation": time * 0.2, "inputDecay": 0.85,
+            ])
+        case .eightfold:
+            return filter("CIEightfoldReflectedTile", image, [
+                kCIInputCenterKey: CIVector(x: e.midX, y: e.midY), kCIInputAngleKey: 0.0, kCIInputWidthKey: minSide * 0.5,
+            ])
+        case .quadMirror:
+            return mirrorVertical(mirror(image))
+        case .magnifier:
+            let r = minSide * 0.3
+            let zoomed = image.transformed(by: CGAffineTransform(translationX: center.x, y: center.y)
+                .scaledBy(x: 1.8, y: 1.8).translatedBy(x: -center.x, y: -center.y))
+            var result = blend(zoomed, over: image, mask: circleMask(center: center, radius: r, feather: 1.5))
+            // 테 두르기: 어두운 링.
+            let ring = CIFilter(name: "CIRadialGradient", parameters: [
+                kCIInputCenterKey: CIVector(cgPoint: center), "inputRadius0": r - 1, "inputRadius1": r + minSide * 0.02,
+                "inputColor0": CIColor(red: 0.15, green: 0.15, blue: 0.18, alpha: 1),
+                "inputColor1": CIColor(red: 0.15, green: 0.15, blue: 0.18, alpha: 1),
+            ])?.outputImage
+            if let ring {
+                let band = circleMask(center: center, radius: r + minSide * 0.02, feather: 1)
+                let hole = circleMask(center: center, radius: r, feather: 1)
+                let ringMask = filter("CISubtractBlendMode", band, [kCIInputBackgroundImageKey: hole])
+                result = blend(ring, over: result, mask: ringMask)
+            }
+            return result
+        default:
+            return image
+        }
+    }
+
+    /// 원형 마스크(안 1, 밖 0). `feather`는 경계 폭(px).
+    static func circleMask(center: CGPoint, radius: CGFloat, feather: CGFloat) -> CIImage {
+        CIFilter(name: "CIRadialGradient", parameters: [
+            kCIInputCenterKey: CIVector(cgPoint: center),
+            "inputRadius0": max(radius - feather, 0), "inputRadius1": radius,
+            "inputColor0": CIColor.white, "inputColor1": CIColor.black,
+        ])?.outputImage ?? CIImage(color: .black)
+    }
+
+    // MARK: 스타일 추가 10종
+
+    static func moreStyle(_ kind: EffectKind, _ image: CIImage, time: Double) -> CIImage {
+        let e = image.extent
+        let minSide = min(e.width, e.height)
+        switch kind {
+        case .xray:
+            return filter("CIXRay", image, [:])
+        case .sketch:
+            let gray = filter("CIPhotoEffectMono", image, [:])
+            let edges = filter("CIEdges", gray, [kCIInputIntensityKey: 6.0])
+            let lines = filter("CIColorInvert", filter("CIColorControls", edges, [kCIInputSaturationKey: 0.0]), [:])
+            let paper = filter("CIColorControls", gray, [kCIInputBrightnessKey: 0.35, kCIInputContrastKey: 0.6])
+            return filter("CIMultiplyCompositing", lines, [kCIInputBackgroundImageKey: paper])
+        case .neon:
+            let edges = filter("CIEdges", image, [kCIInputIntensityKey: 8.0])
+            let vivid = filter("CIColorControls", edges, [kCIInputSaturationKey: 2.5, kCIInputBrightnessKey: 0.05])
+            return filter("CIBloom", vivid, [kCIInputRadiusKey: minSide * 0.02, kCIInputIntensityKey: 1.2])
+        case .vintage:
+            var v = filter("CIPhotoEffectInstant", image, [:])
+            v = filter("CISepiaTone", v, [kCIInputIntensityKey: 0.35])
+            v = filter("CIVignette", v, [kCIInputIntensityKey: 1.2, kCIInputRadiusKey: 2.0])
+            return grain(v, amount: 0.06)
+        case .noir:
+            let n = filter("CIPhotoEffectNoir", image, [:])
+            return grain(filter("CIVignette", n, [kCIInputIntensityKey: 1.5, kCIInputRadiusKey: 1.8]), amount: 0.05)
+        case .mosaic:
+            return filter("CIPixellate", image, [kCIInputCenterKey: CIVector(x: e.midX, y: e.midY),
+                                                kCIInputScaleKey: minSide * 0.03])
+        case .pointillism:
+            return filter("CIPointillize", image, [kCIInputRadiusKey: minSide * 0.012,
+                                                   kCIInputCenterKey: CIVector(x: e.midX, y: e.midY)])
+        case .halftone:
+            return filter("CICMYKHalftone", image, [kCIInputCenterKey: CIVector(x: e.midX, y: e.midY),
+                                                    kCIInputWidthKey: minSide * 0.012, kCIInputAngleKey: 0.3,
+                                                    kCIInputSharpnessKey: 0.7])
+        case .crystallize:
+            return filter("CICrystallize", image, [kCIInputRadiusKey: minSide * 0.03,
+                                                   kCIInputCenterKey: CIVector(x: e.midX, y: e.midY)])
+        case .glitch:
+            return glitch(image, time: time)
+        default:
+            return image
+        }
+    }
+
+    /// 필름 입자: 무작위 잡음을 회색으로 만들어 소프트 라이트로 섞는다.
+    static func grain(_ image: CIImage, amount: CGFloat) -> CIImage {
+        guard let noise = CIFilter(name: "CIRandomGenerator")?.outputImage else { return image }
+        let gray = filter("CIColorMatrix", noise.cropped(to: image.extent), [
+            "inputRVector": CIVector(x: 0, y: amount, z: 0, w: 0), "inputGVector": CIVector(x: 0, y: amount, z: 0, w: 0),
+            "inputBVector": CIVector(x: 0, y: amount, z: 0, w: 0), "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 1),
+            "inputBiasVector": CIVector(x: 0.5 - amount / 2, y: 0.5 - amount / 2, z: 0.5 - amount / 2, w: 0),
+        ])
+        return filter("CISoftLightBlendMode", gray, [kCIInputBackgroundImageKey: image])
+    }
+
+    /// 글리치: 빨강·파랑 채널을 좌우로 어긋나게 하고, 몇 줄의 가로 띠를 밀어낸다(시간에 따라 바뀜).
+    static func glitch(_ image: CIImage, time: Double) -> CIImage {
+        let e = image.extent
+        let shift = e.width * 0.012
+        func channel(_ r: CGFloat, _ g: CGFloat, _ b: CGFloat, dx: CGFloat) -> CIImage {
+            filter("CIColorMatrix", image, [
+                "inputRVector": CIVector(x: r, y: 0, z: 0, w: 0), "inputGVector": CIVector(x: 0, y: g, z: 0, w: 0),
+                "inputBVector": CIVector(x: 0, y: 0, z: b, w: 0), "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 1),
+            ]).transformed(by: CGAffineTransform(translationX: dx, y: 0))
+        }
+        let red = channel(1, 0, 0, dx: shift), green = channel(0, 1, 0, dx: 0), blue = channel(0, 0, 1, dx: -shift)
+        var result = filter("CIAdditionCompositing", filter("CIAdditionCompositing", red, [kCIInputBackgroundImageKey: green]),
+                            [kCIInputBackgroundImageKey: blue]).cropped(to: e)
+        let step = Int(time * 6)
+        for k in 0..<4 {
+            let seed = Double(k * 31 + step * 7)
+            let y0 = e.minY + CGFloat((sin(seed) * 0.5 + 0.5)) * e.height
+            let h = e.height * CGFloat(0.02 + 0.03 * (cos(seed * 1.7) * 0.5 + 0.5))
+            let dx = e.width * CGFloat(sin(seed * 2.3)) * 0.05
+            let band = result.cropped(to: CGRect(x: e.minX, y: y0, width: e.width, height: h))
+                .transformed(by: CGAffineTransform(translationX: dx, y: 0))
+            result = band.composited(over: result)
+        }
+        return result.cropped(to: e)
     }
 
     // MARK: 얼굴교환
