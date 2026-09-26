@@ -4,10 +4,10 @@
 # 준비(Python 3.10~3.12 권장):
 #   python3 -m venv .venv && source .venv/bin/activate
 #   pip install torch coremltools pillow numpy
-#   git clone https://github.com/Li-Chongyi/Zero-DCE.git ~/src/Zero-DCE
+#   git clone --depth 1 https://github.com/Li-Chongyi/Zero-DCE_extension.git ~/src/Zero-DCE_extension
 #
 # 사용법:
-#   python3 tools/convert_zero_dce.py --repo ~/src/Zero-DCE \
+#   python3 tools/convert_zero_dce.py --repo ~/src/Zero-DCE_extension \
 #       --out TripShot/Resources/ML/ZeroDCEpp.mlpackage --size 512 [--check sample.jpg]
 #
 # 설계:

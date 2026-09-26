@@ -82,7 +82,13 @@ final class LowLightEnhancer: @unchecked Sendable {
             return nil
         }
         let config = MLModelConfiguration()
+        #if targetEnvironment(simulator)
+        // iOS 27 시뮬레이터(Xcode 27)에서는 GPU 경로(.all/.cpuAndGPU)가 이 FP16 mlprogram의 출력을 전부 0으로 내놓는다
+        // (BUILD_LOG 09-26). 실기기와 무관한 시뮬레이터 결함이므로 시뮬레이터에서만 CPU로 돌린다.
+        config.computeUnits = .cpuOnly
+        #else
         config.computeUnits = .all
+        #endif
         do {
             return try MLModel(contentsOf: url, configuration: config)
         } catch {

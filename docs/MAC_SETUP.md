@@ -6,7 +6,8 @@
 
 1. **macOS 업데이트**: 시스템 설정 → 일반 → 소프트웨어 업데이트. iOS 27 기기에 설치하려면 iOS 27 SDK가 포함된 최신 Xcode가 필요하고, 그 Xcode는 최신 macOS를 요구한다.
 2. **Xcode 설치**: App Store에서 Xcode 설치(약 10GB). 첫 실행 시 "iOS" 플랫폼 구성요소를 추가로 받는다.
-3. **명령줄 도구**: 터미널에서 `xcode-select --install`.
+3. **명령줄 도구**: 터미널에서 `xcode-select --install`. Xcode 설치 후 `sudo xcode-select -s /Applications/Xcode.app`, `sudo xcodebuild -runFirstLaunch`, `xcodebuild -downloadPlatform iOS`(시뮬레이터 런타임).
+   **Xcode 26 이상은 Metal 컴파일러가 별도 구성요소**다: `xcodebuild -downloadComponent MetalToolchain`. 없으면 `.metal` 파일 빌드에서 `cannot execute tool 'metal'` 오류.
 4. **Homebrew + XcodeGen** (프로젝트 파일 생성 도구):
    ```bash
    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
@@ -78,6 +79,7 @@ Xcode 왼쪽 ⚠️ 아이콘(Issue Navigator)에서 오류를 복사해 채팅�
 2. 첫 지시 예: **"docs/HANDOFF.md의 'Mac 세션이 처음 할 일'을 순서대로 진행하고 결과를 BUILD_LOG.md에 기록해 줘"**
 3. iPhone 설치용 UDID: `xcrun devicectl list devices` 결과의 Identifier를 `scripts/device.local`에 저장(커밋되지 않음).
 4. 시뮬레이터 이름이 다르면 `SIM="platform=iOS Simulator,name=iPhone 16" scripts/build.sh`처럼 지정.
+   `test.sh`는 테스트 전에 시뮬레이터를 부팅하고 앱 권한(위치·카메라·사진·마이크)을 미리 허용한다 — 테스트 호스트가 띄운 권한 대화상자가 남으면 다음 xcodebuild가 10분 이상 멈추기 때문.
 5. 작업 후 `scripts/sync.sh`로 push. 클라우드 세션이 그 결과를 이어받는다.
 
 ## 10. 저조도 모델 변환 (R1-S7, Zero-DCE++ → Core ML)
@@ -89,14 +91,14 @@ Xcode 왼쪽 ⚠️ 아이콘(Issue Navigator)에서 오류를 복사해 채팅�
    python3 -m venv ~/.venvs/tripshot-ml && source ~/.venvs/tripshot-ml/bin/activate
    pip install torch coremltools pillow numpy
    ```
-2. 원 저장소 클론(가중치 포함, 저장소 밖에 둔다):
+2. 원 저장소 클론(가중치 포함, 저장소 밖에 둔다). **Zero-DCE++ 코드·가중치는 `Zero-DCE` 저장소가 아니라 별도 저장소 `Zero-DCE_extension`에 있다**:
    ```bash
-   git clone https://github.com/Li-Chongyi/Zero-DCE.git ~/src/Zero-DCE
-   ls ~/src/Zero-DCE/Zero-DCE++/snapshots_Zero_DCE++/Epoch99.pth   # 있어야 함
+   git clone --depth 1 https://github.com/Li-Chongyi/Zero-DCE_extension.git ~/src/Zero-DCE_extension
+   ls ~/src/Zero-DCE_extension/Zero-DCE++/snapshots_Zero_DCE++/Epoch99.pth   # 있어야 함 (약 52KB)
    ```
 3. 변환(저장소 루트에서). `--check`에 어두운 사진을 주면 PyTorch와 Core ML의 곡선 맵 A 오차를 출력한다:
    ```bash
-   python3 tools/convert_zero_dce.py --repo ~/src/Zero-DCE \
+   python3 tools/convert_zero_dce.py --repo ~/src/Zero-DCE_extension \
        --out TripShot/Resources/ML/ZeroDCEpp.mlpackage --size 512 --check ~/Pictures/night.jpg
    ```
    - 확인: "가중치 로드 … 파라미터 약 10,000개", "A 맵 비교: 최대 오차" 0.02 이하(FLOAT16). 크면 `--fp32`로 다시 변환.
