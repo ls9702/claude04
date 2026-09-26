@@ -104,7 +104,8 @@ final class FaceDetector: @unchecked Sendable {
     func detect(in image: CIImage,
                 maxFaces: Int = FaceDetector.defaultMaxFaces,
                 orientation: CGImagePropertyOrientation = .up,
-                detectionMaxDimension: CGFloat = FaceDetector.defaultDetectionMaxDimension) -> [DetectedFace] {
+                detectionMaxDimension: CGFloat = FaceDetector.defaultDetectionMaxDimension,
+                minFaceWidthFraction: CGFloat = FaceDetector.minFaceWidthFraction) -> [DetectedFace] {
         let extent = image.extent
         guard !extent.isInfinite, !extent.isEmpty, maxFaces > 0 else { return [] }
 
@@ -125,7 +126,7 @@ final class FaceDetector: @unchecked Sendable {
         guard let observations = request.results, !observations.isEmpty else { return [] }
 
         let faces = observations.map { Self.face(from: $0, imageExtent: extent) }
-        return Self.select(faces, imageExtent: extent, maxFaces: maxFaces)
+        return Self.select(faces, imageExtent: extent, maxFaces: maxFaces, minFaceWidthFraction: minFaceWidthFraction)
     }
 
     /// 관측 하나 → 이미지 픽셀 좌표의 얼굴.
@@ -152,7 +153,9 @@ final class FaceDetector: @unchecked Sendable {
     }
 
     /// 너무 작은 얼굴 제외 → 넓이 큰 순 → 상위 `maxFaces`개. 순수 함수.
-    static func select(_ faces: [DetectedFace], imageExtent: CGRect, maxFaces: Int) -> [DetectedFace] {
+    /// 인물 보정은 짧은 변의 12%(`minFaceWidthFraction`), 효과(R2)는 여러 명 단체 사진까지 잡도록 더 작게 쓴다.
+    static func select(_ faces: [DetectedFace], imageExtent: CGRect, maxFaces: Int,
+                       minFaceWidthFraction: CGFloat = FaceDetector.minFaceWidthFraction) -> [DetectedFace] {
         let shortSide = min(imageExtent.width, imageExtent.height)
         let minWidth = shortSide * minFaceWidthFraction
         return faces
@@ -268,6 +271,8 @@ final class SmoothedFaceTracker: @unchecked Sendable {
     let detector: FaceDetector
     let interval: Int
     let detectionMaxDimension: CGFloat
+    let maxFaces: Int
+    let minFaceWidthFraction: CGFloat
 
     // 비디오 큐 전용
     private var smoother = FaceSmoother()
@@ -287,8 +292,12 @@ final class SmoothedFaceTracker: @unchecked Sendable {
 
     init(detector: FaceDetector = FaceDetector(),
          interval: Int = SmoothedFaceTracker.defaultInterval,
-         detectionMaxDimension: CGFloat = SmoothedFaceTracker.liveDetectionMaxDimension) {
+         detectionMaxDimension: CGFloat = SmoothedFaceTracker.liveDetectionMaxDimension,
+         maxFaces: Int = FaceDetector.defaultMaxFaces,
+         minFaceWidthFraction: CGFloat = FaceDetector.minFaceWidthFraction) {
         self.detector = detector
+        self.maxFaces = maxFaces
+        self.minFaceWidthFraction = minFaceWidthFraction
         self.interval = max(1, interval)
         self.detectionMaxDimension = detectionMaxDimension
     }
@@ -308,7 +317,8 @@ final class SmoothedFaceTracker: @unchecked Sendable {
             lastExtent = image.extent
         }
         if frameIndex % interval == 0 {
-            let detected = detector.detect(in: image, detectionMaxDimension: detectionMaxDimension)
+            let detected = detector.detect(in: image, maxFaces: maxFaces, detectionMaxDimension: detectionMaxDimension,
+                                           minFaceWidthFraction: minFaceWidthFraction)
             current = smoother.update(detected)
         }
         frameIndex &+= 1

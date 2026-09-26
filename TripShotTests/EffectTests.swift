@@ -23,7 +23,9 @@ final class EffectTests: XCTestCase {
             "inputColor0": CIColor(red: 0, green: 0, blue: 0, alpha: 0.3), "inputColor1": CIColor(red: 1, green: 1, blue: 1, alpha: 0),
             "inputWidth": 12.0,
         ])!.outputImage!
-        return stripes.composited(over: gradient).cropped(to: extent)
+        // 위쪽에만 밝은 원 하나(위아래 대칭 효과도 픽셀이 바뀌게).
+        let spot = CIImage(color: CIColor(red: 1, green: 0.2, blue: 0.2)).cropped(to: CGRect(x: 60, y: 520, width: 80, height: 80))
+        return spot.composited(over: stripes.composited(over: gradient)).cropped(to: extent)
     }
 
     /// 화면 가운데 위쪽 얼굴(IOD 60).
@@ -59,15 +61,92 @@ final class EffectTests: XCTestCase {
             .composited(over: CIImage(color: .black).cropped(to: extent))
     }
 
-    func testTwentyEffects() {
-        XCTAssertEqual(EffectKind.allCases.count, 20)
-        XCTAssertEqual(Set(EffectKind.allCases.map(\.title)).count, 20, "타일 이름 중복 없음")
+    func testFortyEffectsByCategory() {
+        XCTAssertEqual(EffectKind.allCases.count, 40)
+        XCTAssertEqual(Set(EffectKind.allCases.map(\.title)).count, 40, "타일 이름 중복 없음")
+        let counts = Dictionary(grouping: EffectKind.allCases, by: \.category).mapValues(\.count)
+        XCTAssertEqual(counts[.sticker], 16)
+        XCTAssertEqual(counts[.face], 6)
+        XCTAssertEqual(counts[.lens], 12)
+        XCTAssertEqual(counts[.style], 6)
+    }
+
+    func testStickerAssetsLoad() {
+        let L = StickerLibrary.self
+        let all: [(String, StickerArt?)] = [
+            ("dogEars", L.dogEars), ("dogNose", L.dogNose), ("dogTongue", L.dogTongue), ("catEars", L.catEars),
+            ("catWhiskers", L.catWhiskers), ("rabbitEars", L.rabbitEars), ("rabbitWhiskers", L.rabbitWhiskers),
+            ("bearEars", L.bearEars), ("bearMuzzle", L.bearMuzzle), ("mouseEars", L.mouseEars),
+            ("mouseWhiskers", L.mouseWhiskers), ("crown", L.crown), ("cherryBlossom", L.cherryBlossom),
+            ("hibiscus", L.hibiscus), ("redHeart", L.redHeart), ("sparklingHeart", L.sparklingHeart),
+            ("sunglasses", L.sunglasses), ("glasses", L.glasses), ("ribbon", L.ribbon), ("topHat", L.topHat),
+            ("gradCap", L.gradCap), ("butterfly", L.butterfly), ("halo", L.halo), ("horns", L.horns),
+            ("snowflake", L.snowflake),
+        ]
+        for (name, art) in all {
+            XCTAssertNotNil(art, "\(name) 그림 없음(Resources/Stickers)")
+            XCTAssertGreaterThan(art?.width ?? 0, 100, name)
+        }
+        for kind in EffectKind.allCases {
+            if let asset = kind.tileAsset { XCTAssertNotNil(StickerArt.asset(asset), "\(kind) 타일 그림") }
+        }
+    }
+
+    /// 세 명이 있으면 스티커·얼굴 변형이 세 얼굴 모두에 적용된다(각 얼굴 주변 픽셀이 바뀐다).
+    func testStickersAndFaceEffectsApplyToEveryFace() {
+        let input = testImage()
+        let base = pixels(input)
+        let faces = [face(x: 70, y: 420, iod: 30), face(x: 180, y: 300, iod: 30), face(x: 290, y: 420, iod: 30)]
+        func changedNear(_ bytes: [UInt8], _ p: CGPoint, _ r: Int) -> Double {
+            var changed = 0, total = 0
+            for y in max(0, Int(p.y) - r)..<min(640, Int(p.y) + r) {
+                for x in max(0, Int(p.x) - r)..<min(360, Int(p.x) + r) {
+                    let i = ((639 - y) * 360 + x) * 4
+                    total += 1
+                    if abs(Int(bytes[i]) - Int(base[i])) + abs(Int(bytes[i + 1]) - Int(base[i + 1])) > 10 { changed += 1 }
+                }
+            }
+            return Double(changed) / Double(max(total, 1))
+        }
+        for kind in [EffectKind.crown, .sunglasses, .puppyFace, .bigEyes, .balloonFace] {
+            let out = pixels(EffectRenderer.apply(kind, to: input, input: EffectInput(faces: faces)))
+            for f in faces {
+                let probe = kind == .crown ? f.point(fromEyesUp: 2.2) : f.eyeMid
+                XCTAssertGreaterThan(changedNear(out, probe, 20), 0.05, "\(kind): (\(f.eyeMid.x), \(f.eyeMid.y)) 얼굴")
+            }
+        }
+    }
+
+    func testFaceSelectionKeepsSmallFacesForEffects() {
+        let extent = CGRect(x: 0, y: 0, width: 1080, height: 1920)
+        let small = DetectedFace(boundingBox: CGRect(x: 100, y: 100, width: 60, height: 70), landmarks: FaceLandmarks())
+        let big = DetectedFace(boundingBox: CGRect(x: 400, y: 800, width: 300, height: 340), landmarks: FaceLandmarks())
+        XCTAssertEqual(FaceDetector.select([small, big], imageExtent: extent, maxFaces: 5).count, 1, "인물 보정은 작은 얼굴 제외")
+        XCTAssertEqual(FaceDetector.select([small, big], imageExtent: extent, maxFaces: EffectKind.maxFaces,
+                                           minFaceWidthFraction: EffectKind.minFaceWidthFraction).count, 2,
+                       "효과는 작은 얼굴도 포함")
     }
 
     func testFilterNamesExist() {
         for name in ["CIBumpDistortion", "CIPinchDistortion", "CITwirlDistortion", "CIVignetteEffect", "CILightTunnel",
-                     "CIComicEffect", "CIThermal", "CIRadialGradient", "CIBlendWithMask", "CILinearGradient"] {
+                     "CIComicEffect", "CIThermal", "CIRadialGradient", "CIBlendWithMask", "CILinearGradient",
+                     "CIKaleidoscope", "CITorusLensDistortion", "CIHoleDistortion", "CIBumpDistortionLinear",
+                     "CIVortexDistortion", "CIColorPosterize", "CIColorMonochrome", "CIColorControls", "CIColorMatrix"] {
             XCTAssertNotNil(CIFilter(name: name), name)
+        }
+        // 렌더러가 넘기는 키가 실제로 있는지(없는 키는 조용히 빠지므로 효과가 약해진다).
+        let expected: [String: [String]] = [
+            "CIKaleidoscope": ["inputCount", "inputCenter", "inputAngle"],
+            "CITorusLensDistortion": ["inputCenter", "inputRadius", "inputWidth", "inputRefraction"],
+            "CIHoleDistortion": ["inputCenter", "inputRadius"],
+            "CIBumpDistortionLinear": ["inputCenter", "inputRadius", "inputAngle", "inputScale"],
+            "CIVortexDistortion": ["inputCenter", "inputRadius", "inputAngle"],
+            "CIColorPosterize": ["inputLevels"],
+            "CIColorMonochrome": ["inputColor", "inputIntensity"],
+        ]
+        for (name, keys) in expected {
+            let inputKeys = Set(CIFilter(name: name)?.inputKeys ?? [])
+            for key in keys { XCTAssertTrue(inputKeys.contains(key), "\(name).\(key)") }
         }
         let tunnel = CIFilter(name: "CILightTunnel")!
         XCTAssertTrue(tunnel.inputKeys.contains("inputRotation"))
@@ -96,6 +175,10 @@ final class EffectTests: XCTestCase {
         // 얼굴교환은 한 명이면 그대로.
         let one = EffectRenderer.apply(.faceSwap, to: input, input: EffectInput(faces: [face()]))
         XCTAssertEqual(changedFraction(base, pixels(one)), 0)
+        // 세 명이면 돌아가며 바꿔 셋 다 바뀐다.
+        let three = pixels(EffectRenderer.apply(.faceSwap, to: input, input: EffectInput(faces: [
+            face(x: 70, y: 420, iod: 30), face(x: 180, y: 250, iod: 40, roll: 0.2), face(x: 290, y: 420, iod: 30)])))
+        XCTAssertGreaterThan(changedFraction(base, three), 0.01)
     }
 
     func testBackgroundSwapKeepsPerson() {

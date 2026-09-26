@@ -11,6 +11,15 @@
 
 ---
 
+## 2026-09-26 21:00 · 커밋 e0726d4 → (이번 커밋) · build.sh | test.sh | install-device.sh · R2-S1 효과 40종·Fluent 그림·여러 명
+결과: **성공** (build 오류 0 · test **231/231**, skip 1 = 개발용 스티커 미리보기 `EffectPreviewTests`(`TEST_RUNNER_EFFECT_PREVIEW_DIR` 줄 때만)). 실기기 설치 완료
+사용자 실기기 관찰(20종 버전): 효과 동작 정상. 스티커 그림이 싸 보임, 두 명 이상일 때 일부 얼굴에 적용 안 됨
+원인·수정:
+- 여러 명: `FaceDetector.select`가 짧은 변 12% 미만 얼굴을 버림(인물 보정 기준) → `minFaceWidthFraction` 인자 추가, 효과는 3.5%·최대 8명(`EffectKind.maxFaces`), 라이브 효과 트래커도 같은 기준. 얼굴교환은 3명 이상이면 순환
+- 그림: Fluent Emoji Color SVG(MIT) → Mac에서 4096 렌더·트림 → 720px PNG 25장(4.3MB, `Resources/Stickers`). 동물 귀·코는 얼굴 SVG 도형 번호로 합성(`tools/stickers/compose.py`)
+- `EffectRenderer.filter`는 필터에 없는 키를 넣지 않음(없는 키 setValue는 예외로 앱 종료)
+실기기 확인할 것: 스티커 위치(실제 얼굴·옆얼굴·기울임), 단체 사진에서 모든 얼굴 적용·fps, 새 렌즈 6종·팝아트·컬러포인트·눈내림 fps
+
 ## 2026-09-26 18:30 · 커밋 ebb558b → (이번 커밋) · build.sh | test.sh | install-device.sh · R1-S8d 메뉴·썸네일 + R2-S1 효과 20종
 결과: **성공** (build 오류 0 · test **228/228**: 메뉴 3 + 효과 10 추가, `EnhanceTests.testStageOrderAndHooks` 기대값에 8단계 "effect" 추가). 실기기 설치 완료, 관찰 대기
 - R1-S8d: 촬영 화면 [원본]/[인물 ▾]/[배경 ▾] 드롭다운(`CaptureViewModel.selectOriginal/selectPortrait/selectScene`, `look`), 인물 버튼 제거, 썸네일 = 보관함 최근 사진(`loadLatestLibraryThumbnail`), 항상 탭 가능

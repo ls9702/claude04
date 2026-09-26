@@ -2,17 +2,20 @@
 import CoreGraphics
 import Foundation
 
-/// 효과 템플릿. rawValue는 `PresetParams.effect`에 저장되는 값이라 바꾸지 않는다.
-/// 목록은 시중 앱(Snapchat·B612·SNOW·Photo Booth 등)의 인기 효과를 조사해 Apple 프레임워크만으로 만들 수 있는 것으로 골랐다.
+/// 효과 템플릿. rawValue는 `PresetParams.effect`에 저장되는 값이라 바꾸지 않는다(없어진 값은 디코딩 시 무시된다).
+/// 목록은 시중 앱(Snapchat·B612·SNOW·Photo Booth 등)의 인기 효과를 조사해 골랐다. 스티커 그림은 Fluent Emoji(MIT, Microsoft)
+/// 벡터를 Mac에서 PNG로 변환해 번들에 넣었다(`Resources/Stickers`, 재생성: `tools/stickers`).
 enum EffectKind: String, CaseIterable, Identifiable, Codable {
-    // 얼굴 스티커
-    case puppyFace, catFace, bunnyEars, flowerCrown, crown, heartHalo, sunglasses, blushFreckles
-    // 얼굴 변형
-    case bigEyes, bigMouth, faceSwap
-    // 렌즈
+    // 스티커 16
+    case puppyFace, catFace, bunnyEars, bearEars, mouseEars, flowerCrown, crown, heartHalo
+    case sunglasses, nerdGlasses, ribbon, topHat, gradCap, butterflies, angelHalo, devilHorns
+    // 얼굴 6
+    case bigEyes, bigMouth, faceSwap, balloonFace, tinyFace, alien
+    // 렌즈 12
     case bulge, pinch, twirl, mirror, fisheye, lightTunnel
-    // 스타일·배경
-    case comic, thermal, backgroundSwap
+    case mirrorVertical, kaleidoscope, glassRing, blackHole, stretch, vortex
+    // 스타일 6
+    case comic, thermal, backgroundSwap, popArt, colorPoint, snowfall
 
     var id: String { rawValue }
 
@@ -22,10 +25,16 @@ enum EffectKind: String, CaseIterable, Identifiable, Codable {
 
     var category: Category {
         switch self {
-        case .puppyFace, .catFace, .bunnyEars, .flowerCrown, .crown, .heartHalo, .sunglasses, .blushFreckles: return .sticker
-        case .bigEyes, .bigMouth, .faceSwap: return .face
-        case .bulge, .pinch, .twirl, .mirror, .fisheye, .lightTunnel: return .lens
-        case .comic, .thermal, .backgroundSwap: return .style
+        case .puppyFace, .catFace, .bunnyEars, .bearEars, .mouseEars, .flowerCrown, .crown, .heartHalo,
+             .sunglasses, .nerdGlasses, .ribbon, .topHat, .gradCap, .butterflies, .angelHalo, .devilHorns:
+            return .sticker
+        case .bigEyes, .bigMouth, .faceSwap, .balloonFace, .tinyFace, .alien:
+            return .face
+        case .bulge, .pinch, .twirl, .mirror, .fisheye, .lightTunnel,
+             .mirrorVertical, .kaleidoscope, .glassRing, .blackHole, .stretch, .vortex:
+            return .lens
+        case .comic, .thermal, .backgroundSwap, .popArt, .colorPoint, .snowfall:
+            return .style
         }
     }
 
@@ -33,50 +42,114 @@ enum EffectKind: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .puppyFace: return "강아지"
         case .catFace: return "고양이"
-        case .bunnyEars: return "토끼귀"
+        case .bunnyEars: return "토끼"
+        case .bearEars: return "곰돌이"
+        case .mouseEars: return "생쥐"
         case .flowerCrown: return "꽃왕관"
         case .crown: return "왕관"
         case .heartHalo: return "하트뿅뿅"
         case .sunglasses: return "선글라스"
-        case .blushFreckles: return "볼터치"
+        case .nerdGlasses: return "안경"
+        case .ribbon: return "리본"
+        case .topHat: return "신사모자"
+        case .gradCap: return "학사모"
+        case .butterflies: return "나비"
+        case .angelHalo: return "천사링"
+        case .devilHorns: return "악마뿔"
         case .bigEyes: return "왕눈이"
         case .bigMouth: return "큰입"
         case .faceSwap: return "얼굴교환"
+        case .balloonFace: return "풍선얼굴"
+        case .tinyFace: return "꼬마얼굴"
+        case .alien: return "외계인"
         case .bulge: return "볼록"
         case .pinch: return "오목"
         case .twirl: return "소용돌이"
-        case .mirror: return "거울"
+        case .mirror: return "좌우거울"
         case .fisheye: return "어안렌즈"
         case .lightTunnel: return "빛터널"
+        case .mirrorVertical: return "상하거울"
+        case .kaleidoscope: return "만화경"
+        case .glassRing: return "유리링"
+        case .blackHole: return "블랙홀"
+        case .stretch: return "늘이기"
+        case .vortex: return "회오리"
         case .comic: return "만화"
         case .thermal: return "열화상"
         case .backgroundSwap: return "배경바꾸기"
+        case .popArt: return "팝아트"
+        case .colorPoint: return "컬러포인트"
+        case .snowfall: return "눈내림"
         }
     }
 
-    /// 타일 아이콘(이모지).
+    /// 타일에 쓸 스티커 그림 이름(`Resources/Stickers/stk_<이름>.png`). 없으면 `icon` 이모지.
+    var tileAsset: String? {
+        switch self {
+        case .puppyFace: return "ears_dog"
+        case .catFace: return "ears_cat"
+        case .bunnyEars: return "ears_rabbit"
+        case .bearEars: return "ears_bear"
+        case .mouseEars: return "ears_mouse"
+        case .flowerCrown: return "cherry_blossom"
+        case .crown: return "crown"
+        case .heartHalo: return "sparkling_heart"
+        case .sunglasses: return "sunglasses"
+        case .nerdGlasses: return "glasses"
+        case .ribbon: return "ribbon"
+        case .topHat: return "top_hat"
+        case .gradCap: return "graduation_cap"
+        case .butterflies: return "butterfly"
+        case .angelHalo: return "halo"
+        case .devilHorns: return "horns"
+        case .snowfall: return "snowflake"
+        default: return nil
+        }
+    }
+
+    /// 타일 아이콘(이모지). 스티커는 `tileAsset` 그림을 우선한다.
     var icon: String {
         switch self {
         case .puppyFace: return "🐶"
         case .catFace: return "🐱"
         case .bunnyEars: return "🐰"
+        case .bearEars: return "🐻"
+        case .mouseEars: return "🐭"
         case .flowerCrown: return "🌸"
         case .crown: return "👑"
-        case .heartHalo: return "💕"
+        case .heartHalo: return "💖"
         case .sunglasses: return "🕶️"
-        case .blushFreckles: return "☺️"
+        case .nerdGlasses: return "👓"
+        case .ribbon: return "🎀"
+        case .topHat: return "🎩"
+        case .gradCap: return "🎓"
+        case .butterflies: return "🦋"
+        case .angelHalo: return "😇"
+        case .devilHorns: return "😈"
         case .bigEyes: return "👀"
         case .bigMouth: return "👄"
         case .faceSwap: return "🔄"
+        case .balloonFace: return "🎈"
+        case .tinyFace: return "🤏"
+        case .alien: return "👽"
         case .bulge: return "🔮"
         case .pinch: return "🫨"
         case .twirl: return "🌀"
         case .mirror: return "🪞"
         case .fisheye: return "🐟"
         case .lightTunnel: return "💫"
+        case .mirrorVertical: return "🙃"
+        case .kaleidoscope: return "❄️"
+        case .glassRing: return "💍"
+        case .blackHole: return "🕳️"
+        case .stretch: return "↔️"
+        case .vortex: return "🌪️"
         case .comic: return "💥"
         case .thermal: return "🌡️"
         case .backgroundSwap: return "🌈"
+        case .popArt: return "🎨"
+        case .colorPoint: return "🎯"
+        case .snowfall: return "☃️"
         }
     }
 
@@ -84,39 +157,63 @@ enum EffectKind: String, CaseIterable, Identifiable, Codable {
     var summary: String {
         switch self {
         case .puppyFace: return "강아지 귀·코, 입 벌리면 혀"
-        case .catFace: return "고양이 귀·수염·분홍 코"
-        case .bunnyEars: return "쫑긋 토끼 귀 머리띠"
+        case .catFace: return "고양이 귀·코·수염"
+        case .bunnyEars: return "쫑긋 토끼 귀·수염"
+        case .bearEars: return "동글 곰 귀·주둥이"
+        case .mouseEars: return "큰 생쥐 귀·수염"
         case .flowerCrown: return "머리 위 꽃 화관"
         case .crown: return "금색 왕관"
         case .heartHalo: return "머리 주위를 도는 하트"
         case .sunglasses: return "눈에 맞는 선글라스"
-        case .blushFreckles: return "발그레 볼터치·주근깨"
+        case .nerdGlasses: return "파란 알 안경"
+        case .ribbon: return "머리 위 빨간 리본"
+        case .topHat: return "신사 실크햇"
+        case .gradCap: return "졸업 학사모"
+        case .butterflies: return "머리 주위를 나는 나비"
+        case .angelHalo: return "머리 위 천사 링"
+        case .devilHorns: return "보라색 악마 뿔"
         case .bigEyes: return "눈만 크게"
         case .bigMouth: return "입이 커지는 웃긴 얼굴"
-        case .faceSwap: return "두 사람 얼굴 바꾸기(2명 필요)"
+        case .faceSwap: return "얼굴 바꾸기(2명 이상, 여러 명이면 돌아가며)"
+        case .balloonFace: return "얼굴이 풍선처럼 부풂"
+        case .tinyFace: return "얼굴이 쏙 작아짐"
+        case .alien: return "왕눈에 작은 입"
         case .bulge: return "가운데가 볼록"
         case .pinch: return "가운데가 쏙"
         case .twirl: return "빙글빙글 소용돌이"
         case .mirror: return "좌우 대칭"
         case .fisheye: return "둥근 어안 렌즈"
         case .lightTunnel: return "빛 터널 속으로"
+        case .mirrorVertical: return "위아래 대칭(물 반사)"
+        case .kaleidoscope: return "여섯 갈래 만화경"
+        case .glassRing: return "얼굴 둘레 유리 고리 굴절"
+        case .blackHole: return "가운데로 빨려 들어감"
+        case .stretch: return "가로로 쭉 늘어남"
+        case .vortex: return "강한 회오리"
         case .comic: return "만화책 느낌"
         case .thermal: return "열화상 카메라"
-        case .backgroundSwap: return "사람 뒤 배경을 무지개 그라데이션으로"
+        case .backgroundSwap: return "사람 뒤 배경을 그라데이션으로"
+        case .popArt: return "네 칸 팝아트"
+        case .colorPoint: return "사람만 컬러, 배경은 흑백"
+        case .snowfall: return "눈송이가 내림"
         }
     }
 
-    /// 얼굴 검출이 필요한지. 렌즈 효과(볼록·오목·소용돌이·빛터널)는 얼굴이 있으면 얼굴 중심, 없으면 화면 중심.
+    /// 얼굴 검출이 필요한지. 렌즈 중 일부는 얼굴이 있으면 가장 큰 얼굴 중심, 없으면 화면 중심.
     var usesFaces: Bool {
         switch category {
         case .sticker, .face: return true
-        case .lens: return self == .bulge || self == .pinch || self == .twirl || self == .lightTunnel
+        case .lens:
+            switch self {
+            case .bulge, .pinch, .twirl, .lightTunnel, .glassRing, .blackHole, .vortex, .kaleidoscope: return true
+            default: return false
+            }
         case .style: return false
         }
     }
 
     /// 사람 분리 마스크가 필요한지.
-    var needsPersonMask: Bool { self == .backgroundSwap }
+    var needsPersonMask: Bool { self == .backgroundSwap || self == .colorPoint }
 
     /// 효과가 동작하는 최소 얼굴 수(얼굴교환 2, 스티커·얼굴 변형 1, 나머지 0).
     var minimumFaces: Int {
@@ -125,6 +222,11 @@ enum EffectKind: String, CaseIterable, Identifiable, Codable {
         default: return category == .sticker || category == .face ? 1 : 0
         }
     }
+
+    /// 한 장면에서 효과를 적용할 최대 얼굴 수(단체 사진).
+    static let maxFaces = 8
+    /// 효과용 얼굴 최소 폭(짧은 변 대비). 인물 보정(12%)보다 작게 잡아 여러 명이 멀리 있어도 모두 적용한다.
+    static let minFaceWidthFraction: CGFloat = 0.035
 }
 
 // MARK: - 얼굴 기준점

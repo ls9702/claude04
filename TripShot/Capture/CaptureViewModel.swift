@@ -29,7 +29,9 @@ final class CaptureViewModel: ObservableObject {
     /// 라이브 인물 보정용 얼굴 추적(비디오 큐 전용 상태 + 잠금 보호 얼굴 수). 3프레임마다 검출.
     let faceTracker = SmoothedFaceTracker()
     /// 효과(R2) 전용 얼굴 트래커·사람 분리(비디오 큐 전용). 인물 트래커와 검출 주기를 공유하지 않는다.
-    private let effectTracker = SmoothedFaceTracker()
+    /// 단체 사진도 모두 잡도록 최대 8명, 작은 얼굴(짧은 변의 3.5%)까지, 검출 해상도 960.
+    private let effectTracker = SmoothedFaceTracker(detectionMaxDimension: 960, maxFaces: EffectKind.maxFaces,
+                                                    minFaceWidthFraction: EffectKind.minFaceWidthFraction)
     private let effectSegmenter = LivePersonSegmenter()
     /// 선택한 효과(R2). nil = 효과 없음. 보정 선택(원본/인물/배경)과 독립이며 앱 실행 동안만 유지한다.
     @Published private(set) var effect: EffectKind?
