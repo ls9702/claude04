@@ -1,4 +1,4 @@
-// 촬영 탭 상태와 연결: 카메라 프레임 → 라이브 보정 → Metal 프리뷰, 프리셋·인물 모드(강도 칩·얼굴 마커·원본 보기·셀피 제안)·열 상태 반영, 촬영 후 풀해상도 후처리 대기열.
+// 촬영 탭 상태와 연결: 카메라 프레임 → 라이브 보정 → Metal 프리뷰, 프리셋·인물 모드(강도 칩·얼굴 마커·원본 보기·셀피 제안)·기기 상태(열·배터리·저전력·저장 공간) 반영, 촬영 후 풀해상도 후처리 대기열, 프리뷰 멈춤 감시.
 import AVFoundation
 import Combine
 import CoreImage
@@ -28,6 +28,10 @@ final class CaptureViewModel: ObservableObject {
     let preview = MetalPreviewView.Coordinator()
     /// 라이브 인물 보정용 얼굴 추적(비디오 큐 전용 상태 + 잠금 보호 얼굴 수). 3프레임마다 검출.
     let faceTracker = SmoothedFaceTracker()
+    /// 열·배터리·저전력·저장 공간 관찰(경고 배너). 열 상태는 여기서 받아 프리뷰 해상도에 반영한다.
+    let deviceStatus: DeviceStatusMonitor
+    /// 후처리 대기열(대기 중인 장) 상한. 넘으면 그 장은 보정 없이 원본만 남긴다(메모리·발열 보호).
+    static let maxQueuedJobs = 30
 
     // MARK: 화면 상태
 
@@ -42,6 +46,8 @@ final class CaptureViewModel: ObservableObject {
     /// 후처리 대기 + 진행 중인 장 수(배지).
     @Published private(set) var processingCount = 0
     @Published var errorMessage: String?
+    /// 후처리 연속 실패 횟수(성공하면 0). 3회 이상이면 원인 안내를 덧붙인다.
+    private(set) var consecutivePostProcessFailures = 0
     /// 측정용 초당 프리뷰 프레임 수·버린 프레임 수(DEBUG 빌드 표시).
     @Published private(set) var stats: String = ""
     /// 라이브 프리뷰에서 인물 보정 중인 얼굴 수(0이면 표시 없음). 1초마다 트래커에서 읽는다.
@@ -71,6 +77,8 @@ final class CaptureViewModel: ObservableObject {
     private var thumbnailTask: Task<Void, Never>?
     private var statsTask: Task<Void, Never>?
     private var markerTask: Task<Void, Never>?
+    /// 프리뷰 멈춤 감시(1초 통계 루프에서 갱신).
+    private var stallDetector = PreviewStallDetector()
     /// 원본 보기를 끝낸 시각(`systemUptime`). 길게 누르기를 뗀 직후 UIKit 탭이 포커스로 들어오지 않게 한다.
     private var bypassEndedAt: TimeInterval = 0
     /// 직전 카메라 방향(전면 전환 감지용).
@@ -98,6 +106,7 @@ final class CaptureViewModel: ObservableObject {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        self.deviceStatus = DeviceStatusMonitor()
         // CameraService의 메시지(@Published, 메인에서 변경)를 이 객체의 변경으로 전달해 화면이 갱신되게 한다.
         camera.objectWillChange
             .sink { [weak self] _ in self?.objectWillChange.send() }
@@ -111,10 +120,20 @@ final class CaptureViewModel: ObservableObject {
             .sink { [weak self] front in self?.cameraDidSwitch(front: front) }
             .store(in: &cancellables)
 
-        // 열 상태 변화 알림은 임의 스레드에서 온다 → 메인으로.
-        NotificationCenter.default.publisher(for: ProcessInfo.thermalStateDidChangeNotification)
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in self?.updateThermalState() }
+        // 기기 상태(경고 배너)가 바뀌면 화면 갱신. 열 상태는 프리뷰 해상도에, 저전력 모드는 프레임 레이트에 반영한다.
+        // 모니터가 알림을 메인으로 옮겨 주므로 여기서는 메인이다. @Published 값은 willSet 시점에 오므로 인자 값을 쓴다.
+        deviceStatus.objectWillChange
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
+        deviceStatus.$thermalState
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] state in self?.updateThermalState(state) }
+            .store(in: &cancellables)
+        deviceStatus.$isLowPowerMode
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] lowPower in self?.applyFrameRate(lowPower: lowPower) }
             .store(in: &cancellables)
     }
 
@@ -128,7 +147,15 @@ final class CaptureViewModel: ObservableObject {
         camera.locationProvider = services.locationProvider
         camera.frameHandler = Self.makeFrameHandler(camera: camera, pipeline: pipeline, preview: preview)
         camera.postCaptureHandler = Self.makeSavedHandler(for: self)
-        updateThermalState()   // 설정 반영 포함
+        applyFrameRate()
+        updateThermalState(deviceStatus.thermalState)   // 설정 반영 포함
+    }
+
+    /// 설정 탭 프레임 레이트(30/24)와 저전력 모드(자동 24)를 카메라에 적용한다. 설정 변경 시 화면이 다시 부른다.
+    func applyFrameRate(lowPower: Bool? = nil) {
+        guard let services else { return }
+        camera.preferredFrameRate = DeviceStatus.effectiveFrameRate(preferred: services.preferredFrameRate,
+                                                                    lowPower: lowPower ?? deviceStatus.isLowPowerMode)
     }
 
     /// 비디오 큐에서 실행되는 프레임 콜백. 메인 액터 객체를 캡처하지 않는다.
@@ -173,8 +200,12 @@ final class CaptureViewModel: ObservableObject {
         pipeline.isEnabled = true
         preview.setActive(true)
         camera.start()
+        stallDetector.reset()
         startStats()
         startMarkers()
+        deviceStatus.refreshDiskSpace()
+        // 촬영 탭이 보이는 동안만 화면 자동 꺼짐을 막는다(pause에서 되돌린다).
+        UIApplication.shared.isIdleTimerDisabled = true
     }
 
     /// 백그라운드로 가거나 다른 탭으로 갈 때. 프레임 처리·그리기 예약을 멈추고 세션을 정지한다.
@@ -191,6 +222,7 @@ final class CaptureViewModel: ObservableObject {
         detectedFaceCount = 0
         faceMarkers = []
         setBypass(false)
+        UIApplication.shared.isIdleTimerDisabled = false
     }
 
     // MARK: 프리셋·인물 모드·열 상태
@@ -256,9 +288,9 @@ final class CaptureViewModel: ObservableObject {
         pushSettings()
     }
 
-    private func updateThermalState() {
-        thermalState = ProcessInfo.processInfo.thermalState
-        previewMaxDimension = PreviewQuality.maxDimension(for: thermalState)
+    private func updateThermalState(_ state: ProcessInfo.ThermalState) {
+        thermalState = state
+        previewMaxDimension = PreviewQuality.maxDimension(for: state)
         pushSettings()
     }
 
@@ -370,8 +402,13 @@ final class CaptureViewModel: ObservableObject {
     private func handleSaved(localID: String, tag: Int) {
         lastCapturedID = localID
         loadThumbnail(localID: localID)
+        deviceStatus.refreshDiskSpace()
         guard let snapshot = snapshots.removeValue(forKey: tag) else { return }
         guard snapshot.params != .identity else { return }   // 원본: 후처리 없음
+        guard jobs.count < Self.maxQueuedJobs else {
+            errorMessage = "보정 대기 사진이 너무 많아 이 사진은 원본만 저장했습니다. 잠시 후 다시 찍어 주세요."
+            return
+        }
         jobs.append(PostProcessJob(localID: localID, params: snapshot.params, context: snapshot.context))
         updateProcessingCount()
         startWorkerIfNeeded()
@@ -406,8 +443,13 @@ final class CaptureViewModel: ObservableObject {
         workerBusy = false
         updateProcessingCount()
         if let error {
-            errorMessage = error
-        } else if job.localID == lastCapturedID {
+            consecutivePostProcessFailures += 1
+            errorMessage = UserMessage.postProcessFailure(reason: error,
+                                                          consecutiveFailures: consecutivePostProcessFailures)
+            return
+        }
+        consecutivePostProcessFailures = 0
+        if job.localID == lastCapturedID {
             loadThumbnail(localID: job.localID)   // 보정본으로 다시 읽는다
         }
     }
@@ -416,21 +458,21 @@ final class CaptureViewModel: ObservableObject {
         processingCount = jobs.count + (workerBusy ? 1 : 0)
     }
 
-    /// 풀해상도 후처리 한 장. 메인 밖(분리 태스크)에서 렌더·저장한다. 실패 시 사용자 메시지, 성공 시 nil.
+    /// 풀해상도 후처리 한 장. 메인 밖(분리 태스크)에서 렌더·저장한다. 실패 시 사유(UserMessage), 성공 시 nil.
+    /// "원본은 저장됨" 문구와 연속 실패 안내는 `finish`가 `UserMessage.postProcessFailure`로 붙인다.
     /// 원본은 이미 저장돼 있고, 보정본은 같은 에셋에 비파괴 편집으로 얹는다(PhotoSaver 경유, PLAN §3.4).
     nonisolated private static func run(_ job: PostProcessJob, saver: PhotoSaver) async -> String? {
         await Task.detached(priority: .utility) { () -> String? in
             let assets = PHAsset.fetchAssets(withLocalIdentifiers: [job.localID], options: nil)
             guard let asset = assets.firstObject else {
-                return "촬영한 사진을 찾지 못해 보정을 적용하지 못했습니다."
+                return "촬영한 사진을 찾지 못했습니다."
             }
             do {
                 try await saver.saveNonDestructive(asset: asset, params: job.params,
                                                    horizonAngle: nil, context: job.context)
                 return nil
             } catch {
-                let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-                return "보정 저장 실패(원본은 저장됨): \(message)"
+                return UserMessage.text(for: error)
             }
         }.value
     }
@@ -461,7 +503,22 @@ final class CaptureViewModel: ObservableObject {
                 let faces = self.faceTracker.faceCount
                 if faces != self.detectedFaceCount { self.detectedFaceCount = faces }
                 self.stats = "\(s.rendered)fps · 버림 \(s.dropped)+\(cameraDropped) · \(Int(self.previewMaxDimension))px"
+                self.checkStall(renderedFrames: s.rendered)
             }
+        }
+    }
+
+    /// 프리뷰 멈춤 감시(20분 연속 사용 대비). 세션 중단(전화 등) 중이거나 세션이 아직 안 돌면(시뮬레이터·카메라 없음)
+    /// 세지 않는다 — 중단은 끝나면 카메라가 스스로 재개하고, 런타임 오류는 CameraService가 따로 처리한다.
+    private func checkStall(renderedFrames: Int) {
+        let skip = camera.interruptionMessage != nil || !camera.isRunning
+        switch stallDetector.record(renderedFrames: skip ? nil : renderedFrames) {
+        case .idle:
+            break
+        case .restart:
+            camera.restartSession()
+        case .notify:
+            errorMessage = UserMessage.text(for: CameraError.previewStalled)
         }
     }
 
@@ -492,9 +549,59 @@ final class CaptureViewModel: ObservableObject {
         errorMessage ?? camera.lastError ?? camera.lastSavedMessage
     }
 
+    /// 카메라 세션 중단 안내(전화·다른 앱 카메라 점유 등). 중단이 끝나면 nil.
+    var interruptionMessage: String? { camera.interruptionMessage }
+
+    /// 경고 배너(심각한 것부터).
+    var deviceWarnings: [DeviceWarning] { deviceStatus.warnings }
+
     func clearToast() {
         errorMessage = nil
         camera.lastError = nil
         camera.lastSavedMessage = nil
+    }
+}
+
+// MARK: - 프리뷰 멈춤 감시 (순수)
+
+/// 1초마다 그린 프레임 수를 받아, 연속 `threshold`초 동안 0이면 세션 재시작을 한 번 요청하고,
+/// 재시작 뒤에도 다시 `threshold`초 동안 0이면 사용자에게 한 번 알린다. 프레임이 한 장이라도 오면 처음 상태로.
+struct PreviewStallDetector {
+    enum Action: Equatable { case idle, restart, notify }
+
+    /// 연속 무프레임 초(통계 루프 1회 = 1초).
+    var threshold = 60
+    private(set) var zeroSeconds = 0
+    private(set) var restartTried = false
+    private(set) var notified = false
+
+    /// - Parameter renderedFrames: 지난 1초에 그린 프레임 수. nil이면(세션 중단 등) 세지 않고 카운터만 초기화.
+    mutating func record(renderedFrames: Int?) -> Action {
+        guard let renderedFrames else {
+            zeroSeconds = 0
+            return .idle
+        }
+        if renderedFrames > 0 {
+            reset()
+            return .idle
+        }
+        zeroSeconds += 1
+        guard zeroSeconds >= threshold else { return .idle }
+        zeroSeconds = 0
+        if !restartTried {
+            restartTried = true
+            return .restart
+        }
+        if !notified {
+            notified = true
+            return .notify
+        }
+        return .idle
+    }
+
+    mutating func reset() {
+        zeroSeconds = 0
+        restartTried = false
+        notified = false
     }
 }

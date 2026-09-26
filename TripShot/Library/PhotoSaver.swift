@@ -29,16 +29,8 @@ enum PhotoSaveError: Error, LocalizedError {
     /// 사진 보관함 변경 실패(PhotoKit 오류 래핑).
     case library(Error)
 
-    var errorDescription: String? {
-        switch self {
-        case .notAuthorized: return "사진 보관함 권한이 없습니다."
-        case .inputUnavailable: return "원본 사진을 불러오지 못했습니다."
-        case .renderFailed: return "보정 이미지를 만들지 못했습니다."
-        case .encodingFailed: return "이미지 인코딩에 실패했습니다."
-        case .writeFailed: return "보정 결과를 기록하지 못했습니다."
-        case .library(let error): return "사진 보관함 저장 실패: \(error.localizedDescription)"
-        }
-    }
+    /// 사용자 문구는 `UserMessage`에서 한 곳으로 관리한다(원인 + 조치).
+    var errorDescription: String? { UserMessage.text(for: self) }
 }
 
 /// 사진 보관함 저장 담당. 앱에 하나만 두고 `EnhanceRenderer`를 주입받는다.

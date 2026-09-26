@@ -1,4 +1,4 @@
-// 촬영 탭(앱 시작 화면): 라이브 보정 프리뷰(얼굴 마커·길게 눌러 원본)·렌즈(0.5×/1×/2×·전면 전환)·강도 칩·프리셋 스트립·셔터·인물 버튼·마지막 사진(→ 사진 앱)·후처리 배지.
+// 촬영 탭(앱 시작 화면): 라이브 보정 프리뷰(얼굴 마커·길게 눌러 원본·기기 경고 배너·카메라 중단 안내)·렌즈(0.5×/1×/2×·전면 전환)·강도 칩·프리셋 스트립·셔터·인물 버튼·마지막 사진(→ 사진 앱)·후처리 배지.
 import SwiftData
 import SwiftUI
 
@@ -17,6 +17,8 @@ struct CaptureView: View {
     @GestureState private var isPressingPreview = false
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.openURL) private var openURL
+    /// 탭해서 접은 경고(종류별). 그 경고가 사라지면 목록에서도 뺀다(다시 생기면 펼쳐서 보인다).
+    @State private var collapsedWarnings: Set<DeviceWarning.Kind> = []
 
     enum Mode: String, CaseIterable { case photo = "사진", shorts = "쇼츠" }
 
@@ -46,14 +48,18 @@ struct CaptureView: View {
                     Spacer()
                     Text(msg)
                         .font(.footnote)
+                        .multilineTextAlignment(.center)
                         .padding(.horizontal, 14).padding(.vertical, 8)
-                        .background(.ultraThinMaterial, in: Capsule())
+                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
+                        .padding(.horizontal, 24)
                         .padding(.bottom, 190)
                 }
                 .transition(.opacity)
                 .allowsHitTesting(false)
                 .task(id: msg) {
-                    try? await Task.sleep(for: .seconds(2))
+                    // 저장 완료는 짧게, 오류(원인·조치 문구)는 읽을 시간을 준다.
+                    let isError = msg != vm.camera.lastSavedMessage
+                    try? await Task.sleep(for: .seconds(isError ? 4 : 2))
                     vm.clearToast()
                 }
             }
@@ -89,6 +95,11 @@ struct CaptureView: View {
         .onChange(of: presets.map(\.id)) { _, _ in vm.syncPresets(presets) }
         .onChange(of: presets.map(\.paramsData)) { _, _ in vm.syncPresets(presets) }
         .onChange(of: services.portraitModeEnabled) { _, _ in vm.refreshContext() }
+        // 설정 탭 프레임 레이트(30/24). 저전력 모드면 ViewModel이 24로 낮춘다.
+        .onChange(of: services.preferredFrameRate) { _, _ in vm.applyFrameRate() }
+        .onChange(of: vm.deviceWarnings.map(\.kind)) { _, kinds in
+            collapsedWarnings.formIntersection(kinds)
+        }
         // 강도 칩·직접 값(앨범에서 바꾼 경우 포함) → 현재 params의 인물 값만 다시 계산.
         .onChange(of: services.portraitStrength) { _, _ in vm.refreshPortrait() }
         .onChange(of: services.customPortrait) { _, _ in vm.refreshPortrait() }
@@ -186,6 +197,25 @@ struct CaptureView: View {
             FaceMarkerOverlay(rects: vm.faceMarkers, imageSize: vm.faceMarkerImageSize, mirrored: false)
                 .allowsHitTesting(false)
         }
+        .overlay(alignment: .top) {
+            warningBanner
+        }
+        .overlay {
+            if let message = vm.interruptionMessage {
+                // 세션 중단(전화·다른 앱 카메라 점유 등). 중단이 끝나면 카메라가 스스로 재개하고 이 안내도 사라진다.
+                VStack(spacing: 8) {
+                    Image(systemName: "pause.circle")
+                        .font(.largeTitle)
+                    Text(message)
+                        .font(.footnote)
+                        .multilineTextAlignment(.center)
+                }
+                .padding(16)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
+                .padding(24)
+                .allowsHitTesting(false)
+            }
+        }
         .overlay(alignment: .topLeading) {
             if isPressingPreview {
                 Text("원본")
@@ -225,6 +255,55 @@ struct CaptureView: View {
         // 여기서 순서를 정할 수 없어 ViewModel이 원본 보기 중·직후의 탭을 무시한다.
         // TODO(검증): 최소 거리 0 DragGesture가 MTKView의 UITapGestureRecognizer를 막지 않는지, 핀치 중 길게 누르기가 켜지지 않는지 실기기 확인.
         .simultaneousGesture(beforeAfterGesture)
+    }
+
+    // MARK: 경고 배너
+
+    /// 가장 심각한 경고 하나만 프리뷰 위쪽에. 탭하면 작은 아이콘으로 접히고, 아이콘을 탭하면 다시 펼친다.
+    @ViewBuilder
+    private var warningBanner: some View {
+        if let warning = vm.deviceWarnings.first {
+            let collapsed = collapsedWarnings.contains(warning.kind)
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    if collapsed { collapsedWarnings.remove(warning.kind) } else { collapsedWarnings.insert(warning.kind) }
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: Self.warningIcon(warning.kind))
+                    if !collapsed {
+                        Text(warning.message)
+                            .font(.caption.weight(.semibold))
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                    }
+                }
+                .foregroundStyle(warning.level == .caution ? Color.black : Color.white)
+                .padding(.horizontal, collapsed ? 8 : 12).padding(.vertical, 6)
+                .background(Self.warningColor(warning.level), in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .padding(.top, 8)
+            .accessibilityLabel(warning.message)
+            .accessibilityHint(collapsed ? "펼치기" : "접기")
+        }
+    }
+
+    nonisolated static func warningIcon(_ kind: DeviceWarning.Kind) -> String {
+        switch kind {
+        case .thermalCritical, .thermalSerious: return "thermometer.high"
+        case .lowBattery: return "battery.25"
+        case .lowPower: return "leaf.fill"
+        case .lowDisk: return "externaldrive.badge.exclamationmark"
+        }
+    }
+
+    static func warningColor(_ level: DeviceWarning.Level) -> Color {
+        switch level {
+        case .critical: return Color.red.opacity(0.9)
+        case .caution: return Color.yellow.opacity(0.9)
+        case .info: return Color.gray.opacity(0.8)
+        }
     }
 
     /// 누르고 0.2초가 지나면 손을 뗄 때까지 원본(앨범 보정 화면과 같은 제스처).

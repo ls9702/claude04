@@ -7,6 +7,41 @@ import os
 import Photos
 import UIKit
 
+/// 카메라 오류. 사용자 문구는 `UserMessage.text(for:)`가 만든다.
+enum CameraError: Error, LocalizedError, Equatable {
+    /// 카메라 기기·입력을 열지 못함.
+    case deviceUnavailable
+    /// 이 기기에 요청한 카메라(전면 등)가 없음.
+    case switchUnavailable
+    /// 카메라 전환 중 입력 교체 실패.
+    case switchFailed
+    /// 프리뷰 출력을 붙이지 못함.
+    case previewUnavailable
+    /// 촬영 실패(AVFoundation 오류 래핑, 메시지만 비교).
+    case captureFailed(Error?)
+    /// 촬영 결과에 파일 데이터가 없음.
+    case noCaptureData
+    /// 세션 실행 중 오류(`runtimeErrorNotification`).
+    case runtime
+    /// 프리뷰 프레임이 오래 끊김(세션 재시작 후에도).
+    case previewStalled
+
+    var errorDescription: String? { UserMessage.text(for: self) }
+
+    static func == (lhs: CameraError, rhs: CameraError) -> Bool {
+        switch (lhs, rhs) {
+        case (.deviceUnavailable, .deviceUnavailable), (.switchUnavailable, .switchUnavailable),
+             (.switchFailed, .switchFailed), (.previewUnavailable, .previewUnavailable),
+             (.noCaptureData, .noCaptureData), (.runtime, .runtime), (.previewStalled, .previewStalled):
+            return true
+        case (.captureFailed(let a), .captureFailed(let b)):
+            return a?.localizedDescription == b?.localizedDescription
+        default:
+            return false
+        }
+    }
+}
+
 /// 카메라 세션 담당. 프리뷰 렌더는 모른다 — 프레임을 `frameHandler`로 넘길 뿐이다(R1-S4).
 ///
 /// 큐 규칙:
@@ -34,6 +69,11 @@ final class CameraService: NSObject, ObservableObject {
     private var rotationCoordinator: AVCaptureDevice.RotationCoordinator?
     /// 현재 기기의 `virtualDeviceSwitchOverVideoZoomFactors`(표시 배율 환산용). sessionQueue에서만 접근.
     private var currentSwitchOvers: [CGFloat] = []
+    /// 사용자가 세션 실행을 원하는지(start/stop). 중단·런타임 오류 뒤 자동 재개 판단용. sessionQueue에서만 접근.
+    private var wantsRunning = false
+    /// 런타임 오류 자동 재시작을 이미 한 번 시도했는지(연속 재시작 방지). sessionQueue에서만 접근.
+    private var runtimeRestartTried = false
+    private var sessionObservers: [NSObjectProtocol] = []
     /// 사진 연결 회전 폴백 값(세로).
     private static let portraitRotationAngle: CGFloat = 90
 
@@ -76,7 +116,8 @@ final class CameraService: NSObject, ObservableObject {
         handlerLock.withLock { _isPreviewMirrored }
     }
 
-    /// 프리뷰·영상 프레임 레이트(기본 30, 발열 완화용으로 24 선택 가능 — 설정 UI는 R1-S8b).
+    /// 프리뷰·영상 프레임 레이트(기본 30, 발열 완화용으로 24 선택 가능 — 설정 탭 `AppServices.preferredFrameRate`,
+    /// 저전력 모드면 자동 24 — `CaptureViewModel.applyFrameRate()`).
     /// 어느 스레드에서 바꿔도 되며, 세션이 구성돼 있으면 세션 큐에서 바로 적용한다.
     var preferredFrameRate: Double {
         get { handlerLock.withLock { _preferredFrameRate } }
@@ -102,6 +143,8 @@ final class CameraService: NSObject, ObservableObject {
 
     @Published var isRunning = false
     @Published var lastError: String?
+    /// 세션이 중단된 동안(전화·다른 앱의 카메라 점유·화면 분할·발열) 프리뷰 위에 보일 안내. 중단이 끝나면 nil.
+    @Published private(set) var interruptionMessage: String?
     @Published var lastSavedMessage: String?
     /// 마지막으로 저장한 촬영 에셋의 localIdentifier. 보정본을 같은 에셋에 얹는 것은 R1-S4에서 이 값을 쓴다.
     @Published var lastCapturedAssetID: String?
@@ -121,6 +164,70 @@ final class CameraService: NSObject, ObservableObject {
     /// 촬영 요청 tag. uniqueID별로 보관했다가 `postCaptureHandler`에 넘긴다. sessionQueue에서만 접근.
     private var pendingTags: [Int64: Int] = [:]
 
+    // MARK: 초기화·중단 처리
+
+    override init() {
+        super.init()
+        observeSession()
+    }
+
+    deinit {
+        for observer in sessionObservers { NotificationCenter.default.removeObserver(observer) }
+    }
+
+    /// 세션 중단·런타임 오류 알림 구독. 알림은 임의 스레드에서 오므로 상태는 세션 큐·메인으로 옮겨 바꾼다.
+    /// - 중단(전화·다른 앱 카메라 점유 등): 프리뷰가 멈춘다 → 안내 표시.
+    /// - 중단 끝: 안내를 지우고, 실행을 원하는 상태인데 멈춰 있으면 `startRunning()`으로 재개.
+    /// - 런타임 오류: 미디어 서비스 재설정 등. 한 번만 자동 재시작하고 안내한다.
+    private func observeSession() {
+        let center = NotificationCenter.default
+        // 시그니처: AVCaptureSession.wasInterruptedNotification / interruptionEndedNotification / runtimeErrorNotification
+        //          userInfo[AVCaptureSessionInterruptionReasonKey]: NSNumber(InterruptionReason.rawValue)
+        //          userInfo[AVCaptureSessionErrorKey]: AVError
+        sessionObservers.append(center.addObserver(forName: AVCaptureSession.wasInterruptedNotification,
+                                                   object: session, queue: nil) { [weak self] note in
+            let raw = (note.userInfo?[AVCaptureSessionInterruptionReasonKey] as? NSNumber)?.intValue
+            let reason = raw.flatMap(AVCaptureSession.InterruptionReason.init(rawValue:))
+            // 백그라운드 전환 중단은 정상 흐름(pause가 이미 멈춤)이라 안내하지 않는다.
+            guard reason != .videoDeviceNotAvailableInBackground else { return }
+            let message = UserMessage.cameraInterruption(reason)
+            Self.log.notice("세션 중단: \(message, privacy: .public)")
+            DispatchQueue.main.async { self?.interruptionMessage = message }
+        })
+        sessionObservers.append(center.addObserver(forName: AVCaptureSession.interruptionEndedNotification,
+                                                   object: session, queue: nil) { [weak self] _ in
+            guard let self else { return }
+            Self.log.notice("세션 중단 끝")
+            DispatchQueue.main.async { self.interruptionMessage = nil }
+            self.sessionQueue.async {
+                guard self.wantsRunning, !self.session.isRunning else { return }
+                self.session.startRunning()
+                let running = self.session.isRunning
+                DispatchQueue.main.async { self.isRunning = running }
+            }
+        })
+        sessionObservers.append(center.addObserver(forName: AVCaptureSession.runtimeErrorNotification,
+                                                   object: session, queue: nil) { [weak self] note in
+            guard let self else { return }
+            let error = note.userInfo?[AVCaptureSessionErrorKey] as? AVError
+            Self.log.error("세션 런타임 오류: \(error?.localizedDescription ?? "-", privacy: .public)")
+            self.sessionQueue.async {
+                guard self.wantsRunning else { return }
+                // 미디어 서비스 재설정은 매번 재시작, 그 밖의 오류는 한 번만 시도한다(무한 재시작 방지).
+                let isReset = error?.code == .mediaServicesWereReset
+                guard isReset || !self.runtimeRestartTried else {
+                    DispatchQueue.main.async { self.lastError = UserMessage.text(for: CameraError.runtime) }
+                    return
+                }
+                self.runtimeRestartTried = true
+                DispatchQueue.main.async { self.lastError = UserMessage.text(for: CameraError.runtime) }
+                self.session.startRunning()
+                let running = self.session.isRunning
+                DispatchQueue.main.async { self.isRunning = running }
+            }
+        })
+    }
+
     // MARK: 세션 구성
 
     func configureIfNeeded() {
@@ -135,7 +242,7 @@ final class CameraService: NSObject, ObservableObject {
             }
 
             guard let device = Self.makeDevice(for: .back), installInput(device: device) else {
-                DispatchQueue.main.async { self.lastError = "카메라를 열 수 없습니다." }
+                DispatchQueue.main.async { self.lastError = UserMessage.text(for: CameraError.deviceUnavailable) }
                 session.commitConfiguration()
                 return
             }
@@ -152,7 +259,7 @@ final class CameraService: NSObject, ObservableObject {
             if session.canAddOutput(videoOutput) {
                 session.addOutput(videoOutput)
             } else {
-                DispatchQueue.main.async { self.lastError = "프리뷰를 시작할 수 없습니다." }
+                DispatchQueue.main.async { self.lastError = UserMessage.text(for: CameraError.previewUnavailable) }
             }
 
             configureFormat(for: device)
@@ -170,13 +277,13 @@ final class CameraService: NSObject, ObservableObject {
         sessionQueue.async { [self] in
             guard configured, videoInput?.device.position != position else { return }
             guard let device = Self.makeDevice(for: position) else {
-                DispatchQueue.main.async { self.lastError = "이 기기에서 해당 카메라를 쓸 수 없습니다." }
+                DispatchQueue.main.async { self.lastError = UserMessage.text(for: CameraError.switchUnavailable) }
                 return
             }
             session.beginConfiguration()
             guard installInput(device: device) else {
                 session.commitConfiguration()
-                DispatchQueue.main.async { self.lastError = "카메라를 전환하지 못했습니다." }
+                DispatchQueue.main.async { self.lastError = UserMessage.text(for: CameraError.switchFailed) }
                 return
             }
             configureFormat(for: device)
@@ -348,17 +455,36 @@ final class CameraService: NSObject, ObservableObject {
 
     func start() {
         sessionQueue.async { [self] in
+            wantsRunning = true
+            runtimeRestartTried = false
             guard configured, !session.isRunning else { return }
             session.startRunning()
-            DispatchQueue.main.async { self.isRunning = self.session.isRunning }
+            let running = session.isRunning
+            DispatchQueue.main.async { self.isRunning = running }
         }
     }
 
     func stop() {
         sessionQueue.async { [self] in
+            wantsRunning = false
             guard session.isRunning else { return }
             session.stopRunning()
-            DispatchQueue.main.async { self.isRunning = false }
+            DispatchQueue.main.async {
+                self.isRunning = false
+                self.interruptionMessage = nil
+            }
+        }
+    }
+
+    /// 프리뷰가 오래 멈췄을 때(20분 연속 사용 대비) 세션을 멈췄다가 다시 시작한다. 실행을 원하는 상태일 때만.
+    func restartSession() {
+        sessionQueue.async { [self] in
+            guard configured, wantsRunning else { return }
+            Self.log.notice("프리뷰 멈춤 → 세션 재시작")
+            if session.isRunning { session.stopRunning() }
+            session.startRunning()
+            let running = session.isRunning
+            DispatchQueue.main.async { self.isRunning = running }
         }
     }
 
@@ -458,7 +584,7 @@ extension CameraService: AVCaptureVideoDataOutputSampleBufferDelegate {
 extension CameraService: AVCapturePhotoCaptureDelegate {
     func photoOutput(_ output: AVCapturePhotoOutput, didFinishProcessingPhoto photo: AVCapturePhoto, error: Error?) {
         if let error {
-            DispatchQueue.main.async { self.lastError = "촬영 실패: \(error.localizedDescription)" }
+            DispatchQueue.main.async { self.lastError = UserMessage.text(for: CameraError.captureFailed(error)) }
             return
         }
         // 이 콜백은 세션 큐가 아닌 스레드에서 올 수 있으므로 pendingLocations는 세션 큐에서 꺼낸다.
@@ -471,7 +597,7 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
             let location = pendingLocations.removeValue(forKey: uniqueID)
             let tag = pendingTags.removeValue(forKey: uniqueID) ?? 0
             guard let data else {
-                DispatchQueue.main.async { self.lastError = "촬영 데이터를 읽지 못했습니다." }
+                DispatchQueue.main.async { self.lastError = UserMessage.text(for: CameraError.noCaptureData) }
                 return
             }
             save(data: data, location: location, tag: tag)
@@ -503,15 +629,15 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
                     // 원본 저장이 끝난 뒤 보정 후처리를 요청한다(같은 에셋에 비파괴로 얹음).
                     handler?(id, tag)
                 } catch {
-                    let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-                    await MainActor.run { self.lastError = "저장 실패: \(message)" }
+                    let message = UserMessage.text(for: error)
+                    await MainActor.run { self.lastError = "원본 저장 실패: \(message)" }
                 }
                 return
             }
 
             // PhotoSaver가 주입되지 않은 경우의 기존 저장 방식.
             guard await Permissions.requestPhotoLibrary() else {
-                await MainActor.run { self.lastError = "사진 보관함 권한이 없습니다." }
+                await MainActor.run { self.lastError = UserMessage.photoPermission }
                 return
             }
             do {
@@ -522,7 +648,7 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
                 }
                 await MainActor.run { self.lastSavedMessage = "사진 앱에 저장했습니다." }
             } catch {
-                await MainActor.run { self.lastError = "저장 실패: \(error.localizedDescription)" }
+                await MainActor.run { self.lastError = "원본 저장 실패: \(UserMessage.text(for: error))" }
             }
         }
     }

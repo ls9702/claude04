@@ -36,12 +36,8 @@ enum EnhanceSaveError: LocalizedError {
     case assetUnavailable
     case saverUnavailable
 
-    var errorDescription: String? {
-        switch self {
-        case .assetUnavailable: return "사진을 찾을 수 없습니다."
-        case .saverUnavailable: return "저장 기능을 사용할 수 없습니다."
-        }
-    }
+    /// 사용자 문구는 `UserMessage`에서 한 곳으로 관리한다.
+    var errorDescription: String? { UserMessage.text(for: self) }
 }
 
 /// 일괄 저장 진행 상태(UI 표시용).
@@ -89,6 +85,12 @@ struct BatchSaveResult: Equatable {
         let names = failures.prefix(5).map(\.displayName).joined(separator: ", ")
         let more = failures.count > 5 ? " 외 \(failures.count - 5)장" : ""
         return "실패: \(names)\(more)"
+    }
+
+    /// 일괄 저장 알림에 덧붙일 첫 번째 실패 사유. 실패가 없거나 한 장짜리 저장(요약에 이미 사유가 있음)이면 nil.
+    var firstFailureReason: String? {
+        guard total > 1, let first = failures.first else { return nil }
+        return "사유: \(first.message)"
     }
 }
 
@@ -278,7 +280,7 @@ final class EnhanceViewModel: ObservableObject {
     func loadSelection(identifiers: [String?]) async {
         guard await Permissions.requestPhotoLibrary() else {
             setItems([])
-            alertMessage = "사진 보관함 권한이 필요합니다. 설정 > TripShot > 사진에서 허용해 주세요."
+            alertMessage = UserMessage.photoPermission
             return
         }
         let wanted = identifiers.compactMap { $0 }
@@ -602,7 +604,7 @@ final class EnhanceViewModel: ObservableObject {
         var result = BatchSaveResult(total: targets.count)
         guard let first = targets.first else { return result }
         guard let saver else {
-            let message = EnhanceSaveError.saverUnavailable.localizedDescription
+            let message = UserMessage.text(for: EnhanceSaveError.saverUnavailable)
             result.failures = targets.map {
                 BatchSaveResult.Failure(localID: $0.localID, displayName: $0.displayName, message: message)
             }
@@ -632,7 +634,7 @@ final class EnhanceViewModel: ObservableObject {
                 try await job.value
                 result.succeededIDs.append(item.localID)
             } catch {
-                let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                let message = UserMessage.text(for: error)
                 result.failures.append(.init(localID: item.localID, displayName: item.displayName, message: message))
             }
             progress?.done += 1
@@ -654,6 +656,7 @@ final class EnhanceViewModel: ObservableObject {
         saveTask = nil
         var message = result.summary
         if let detail = result.failureDetail { message += "\n" + detail }
+        if let reason = result.firstFailureReason { message += "\n" + reason }
         alertMessage = message
 
         guard mode == .nonDestructive else {

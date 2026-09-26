@@ -1,6 +1,7 @@
 // 앱 전역 의존성(렌더러·사진 저장·위치)과 앱 수준 상태(인물 모드 스위치·선택 프리셋)를 한곳에서 만들어 주입한다.
 import Combine
 import Foundation
+import os
 import SwiftUI
 
 /// 앱에 하나만 두는 서비스 묶음. `TripShotApp`에서 `@StateObject`로 만들고 `.environmentObject`로 주입한다.
@@ -14,7 +15,15 @@ final class AppServices: ObservableObject {
         static let selectedPresetID = "selectedPresetID"
         static let portraitStrength = "portraitStrength"
         static let customPortrait = "customPortrait"
+        static let preferredFrameRate = "preferredFrameRate"
+        static let installDate = "installDate"
+        static let installStamp = "installStamp"
     }
+
+    private static let log = Logger(subsystem: "com.ls9702.tripshot", category: "services")
+
+    /// 설정 탭 프레임 레이트 선택지(발열·배터리 완화용 24).
+    static let frameRateOptions: [Double] = [30, 24]
 
     let renderer: EnhanceRenderer
     let photoSaver: PhotoSaver
@@ -22,9 +31,21 @@ final class AppServices: ObservableObject {
     /// 저장·앨범 경로의 얼굴 검출기(상태 없음, 스레드 안전).
     let faceDetector = FaceDetector()
     /// 인물 보정 Metal 커널. 처음 쓸 때 한 번 로드한다. 로드 실패면 nil(피부색 마스크·주파수 분리 없이 폴백).
-    private(set) lazy var portraitKernels: PortraitKernels? = PortraitKernels.load()
+    /// 실패는 로그만 남기고 UI는 설정 탭 "정보"의 상태 표시로 알린다.
+    private(set) lazy var portraitKernels: PortraitKernels? = {
+        let kernels = PortraitKernels.load()
+        if kernels == nil { Self.log.error("인물 보정 Metal 커널 로드 실패 → 폴백(피부 마스크·주파수 분리 없음)") }
+        else if kernels?.faceWarp == nil { Self.log.error("얼굴 워프 커널 로드 실패 → 윤곽·눈 보정 건너뜀") }
+        return kernels
+    }()
     /// 저조도(Zero-DCE++) 보정기. 처음 쓸 때 모델·커널을 로드한다. 모델이 없으면 폴백 보정으로 동작한다.
-    private(set) lazy var lowLight = LowLightEnhancer()
+    /// 실패는 로그만(LowLightEnhancer가 이유를 남긴다). UI는 설정 탭 상태 표시.
+    private(set) lazy var lowLight: LowLightEnhancer = {
+        let enhancer = LowLightEnhancer()
+        if !enhancer.isModelAvailable { Self.log.error("저조도 모델 없음 → 폴백 보정") }
+        if !enhancer.isKernelAvailable { Self.log.error("저조도 곡선 커널 로드 실패 → 폴백 보정") }
+        return enhancer
+    }()
 
     /// 인물 모드 스위치. 마지막 상태를 기억한다(PLAN §3.3). 기본 꺼짐.
     @Published var portraitModeEnabled: Bool {
@@ -52,6 +73,19 @@ final class AppServices: ObservableObject {
         }
     }
 
+    /// 라이브 프리뷰 프레임 레이트(30 또는 24). 촬영 탭이 카메라에 적용한다(저전력 모드면 자동 24).
+    @Published var preferredFrameRate: Double {
+        didSet {
+            // didSet 안에서 자기 자신을 다시 설정해도 didSet은 다시 불리지 않는다(Swift 규칙).
+            let normalized = Self.normalizedFrameRate(preferredFrameRate)
+            if normalized != preferredFrameRate { preferredFrameRate = normalized }
+            defaults.set(normalized, forKey: Keys.preferredFrameRate)
+        }
+    }
+
+    /// 이번 설치(빌드)를 처음 실행한 날. 무료 서명 만료 추정에 쓴다(`SigningInfo`).
+    let installDate: Date
+
     private let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) {
@@ -65,6 +99,29 @@ final class AppServices: ObservableObject {
             .flatMap(PortraitStrength.init(rawValue:)) ?? .normal)
         _customPortrait = Published(initialValue: defaults.data(forKey: Keys.customPortrait)
             .flatMap { try? JSONDecoder().decode(PortraitParams.self, from: $0) })
+        _preferredFrameRate = Published(initialValue: Self.normalizedFrameRate(
+            defaults.object(forKey: Keys.preferredFrameRate) as? Double ?? 30))
+        installDate = SigningInfo.recordInstallDate(defaults: defaults,
+                                                    dateKey: Keys.installDate,
+                                                    stampKey: Keys.installStamp,
+                                                    currentStamp: SigningInfo.currentBuildStamp())
+    }
+
+    /// 30·24 외의 값은 30으로.
+    nonisolated static func normalizedFrameRate(_ value: Double) -> Double {
+        abs(value - 24) < 0.5 ? 24 : 30
+    }
+
+    // MARK: 설정 백업·초기화
+
+    /// 앱 설정을 기본값으로(인물 모드 끔·보통·직접 값 없음·선택 프리셋 없음·30fps). 사진·프리셋 목록은 건드리지 않는다.
+    func resetSettings() {
+        portraitModeEnabled = false
+        portraitStrength = .normal
+        customPortrait = nil
+        selectedPresetID = nil
+        preferredFrameRate = 30
+        defaults.removeObject(forKey: CaptureViewModel.portraitSuggestionKey)
     }
 
     // MARK: 인물 강도

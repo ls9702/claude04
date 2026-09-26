@@ -99,6 +99,8 @@ final class LowLightEnhancer: @unchecked Sendable {
 
     /// 모델이 번들에 있고 로드됐는지(설정 화면 표시용).
     var isModelAvailable: Bool { model != nil }
+    /// 곡선 Metal 커널(`EnhanceKernels.zeroDCECurve`)이 로드됐는지(설정 화면 표시용).
+    var isKernelAvailable: Bool { kernel != nil }
 
     /// 마지막 `enhance` 실행 경로. 아직 실행 전이면 nil.
     var lastPath: LowLightPath? {
