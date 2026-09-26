@@ -240,6 +240,35 @@ final class CaptureViewModel: ObservableObject {
         }
     }
 
+    // MARK: 원본 / 인물 / 배경 메뉴
+
+    /// 촬영 화면 드롭다운 3종 중 지금 켜진 것. 서로 배타적이다.
+    enum Look: Equatable { case original, portrait, scene }
+
+    var look: Look {
+        if choice == .original { return .original }
+        return services?.portraitModeEnabled == true ? .portrait : .scene
+    }
+
+    /// [원본]: 보정 없음, 인물 모드 끔.
+    func selectOriginal() {
+        services?.portraitModeEnabled = false
+        select(choice: .original, params: .identity)
+    }
+
+    /// [인물 ▾] 자연/보통/강함: 자동 보정 위에 인물 보정(강도 칩 값).
+    func selectPortrait(_ strength: PortraitStrength) {
+        if choice != .auto { select(choice: .auto, params: PresetParams()) }
+        services?.portraitModeEnabled = true
+        selectPortraitStrength(strength)
+    }
+
+    /// [배경 ▾] 자동·프리셋: 인물 모드 끔.
+    func selectScene(choice: PresetChoice, params: PresetParams) {
+        services?.portraitModeEnabled = false
+        select(choice: choice, params: params)
+    }
+
     /// 프리셋 스트립에서 선택. 앱 선택 프리셋(`AppServices.selectedPresetID`)을 앨범 화면과 공유한다.
     func select(choice: PresetChoice, params: PresetParams) {
         apply(choice: choice, params: params)
@@ -377,7 +406,7 @@ final class CaptureViewModel: ObservableObject {
     func answerPortraitSuggestion(enable: Bool) {
         defaults.set(true, forKey: Self.portraitSuggestionKey)
         showPortraitSuggestion = false
-        if enable { services?.portraitModeEnabled = true }
+        if enable { selectPortrait(services?.portraitStrength ?? .normal) }
     }
 
     // MARK: 촬영
@@ -478,6 +507,23 @@ final class CaptureViewModel: ObservableObject {
     }
 
     // MARK: 썸네일
+
+    /// 이번 실행에서 아직 찍은 사진이 없으면 사진 보관함의 가장 최근 사진을 썸네일로 보여 준다.
+    /// 권한이 아직 정해지지 않았으면 여기서 묻는다(촬영 저장에도 필요한 권한). 거부면 빈 칸.
+    func loadLatestLibraryThumbnail() {
+        guard lastCapturedID == nil else { return }
+        thumbnailTask?.cancel()
+        thumbnailTask = Task { [weak self] in
+            guard await Permissions.requestPhotoLibrary(), !Task.isCancelled else { return }
+            let options = PHFetchOptions()
+            options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+            options.fetchLimit = 1
+            guard let asset = PHAsset.fetchAssets(with: .image, options: options).firstObject else { return }
+            let image = await PhotoImageLoader.image(for: asset, targetSize: Self.thumbnailSize, contentMode: .aspectFill)
+            guard !Task.isCancelled, let image, self?.lastCapturedID == nil else { return }
+            self?.lastThumbnail = image
+        }
+    }
 
     private func loadThumbnail(localID: String) {
         thumbnailTask?.cancel()

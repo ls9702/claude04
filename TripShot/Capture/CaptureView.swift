@@ -1,4 +1,4 @@
-// 촬영 탭(앱 시작 화면): 전체화면 9:16 라이브 보정 프리뷰(얼굴 마커·길게 눌러 원본·기기 경고 배너·카메라 중단 안내)·렌즈(0.5×/1×/2×·전면 전환)·강도 칩·프리셋 스트립·셔터·인물 버튼·마지막 사진(→ 사진 앱)·후처리 배지.
+// 촬영 탭(앱 시작 화면): 전체화면 9:16 라이브 보정 프리뷰(얼굴 마커·길게 눌러 원본·기기 경고 배너·카메라 중단 안내)·렌즈(0.5×/1×/2×·전면 전환)·[원본]/[인물 ▾]/[배경 ▾] 메뉴·셔터·마지막 사진(→ 사진 앱, 없으면 보관함 최근 사진)·후처리 배지.
 import SwiftData
 import SwiftUI
 
@@ -84,10 +84,12 @@ struct CaptureView: View {
             services.locationProvider.start()
             guard cam else { return }
             vm.startCamera()
+            vm.loadLatestLibraryThumbnail()
         }
         .onAppear {                        // 다른 탭에서 돌아옴(권한 전이면 아무 일 없음)
             isVisible = true
             vm.resume()
+            vm.loadLatestLibraryThumbnail()   // 다른 앱에서 찍은 사진 반영(이번 실행에 찍은 사진이 있으면 그대로)
         }
         .onDisappear {                     // 다른 탭으로 감: 세션·프레임 처리 정지(발열·배터리)
             isVisible = false
@@ -352,14 +354,7 @@ struct CaptureView: View {
             lensButtons
 
             if mode == .photo {
-                if services.portraitModeEnabled {
-                    PortraitStrengthChips(selection: vm.portraitStrengthSelection) { strength in
-                        vm.selectPortraitStrength(strength)
-                    }
-                }
-                PresetStrip(selection: vm.choice) { choice, params in
-                    vm.select(choice: choice, params: params)
-                }
+                lookMenus
             }
 
             HStack {
@@ -379,6 +374,82 @@ struct CaptureView: View {
             .padding(.bottom, 16)
         }
         .padding(.top, 8)
+    }
+
+    // MARK: 원본 / 인물 / 배경
+
+    /// 작은 캡슐 3개: [원본] [인물 ▾ 자연·보통·강함] [배경 ▾ 자동·프리셋]. 켜진 것은 노란색, 라벨에 선택 값 표시.
+    private var lookMenus: some View {
+        HStack(spacing: 8) {
+            Button {
+                vm.selectOriginal()
+            } label: {
+                lookLabel("원본", detail: nil, isOn: vm.look == .original, hasMenu: false)
+            }
+            .buttonStyle(.plain)
+
+            Menu {
+                ForEach(PortraitStrength.allCases) { strength in
+                    Button {
+                        vm.selectPortrait(strength)
+                    } label: {
+                        if vm.look == .portrait && vm.portraitStrengthSelection == strength {
+                            Label(strength.title, systemImage: "checkmark")
+                        } else {
+                            Text(strength.title)
+                        }
+                    }
+                }
+            } label: {
+                lookLabel("인물", detail: vm.look == .portrait ? (vm.portraitStrengthSelection?.title ?? "직접") : nil,
+                          isOn: vm.look == .portrait, hasMenu: true)
+            }
+
+            Menu {
+                sceneItem("자동", choice: .auto, params: PresetParams())
+                ForEach(presets) { preset in
+                    sceneItem(preset.name, choice: .preset(preset.id), params: preset.params)
+                }
+            } label: {
+                lookLabel("배경", detail: vm.look == .scene ? sceneName : nil, isOn: vm.look == .scene, hasMenu: true)
+            }
+        }
+    }
+
+    private var sceneName: String {
+        switch vm.choice {
+        case .preset(let id): return presets.first { $0.id == id }?.name ?? "자동"
+        default: return "자동"
+        }
+    }
+
+    private func sceneItem(_ title: String, choice: PresetChoice, params: PresetParams) -> some View {
+        Button {
+            vm.selectScene(choice: choice, params: params)
+        } label: {
+            if vm.look == .scene && vm.choice == choice {
+                Label(title, systemImage: "checkmark")
+            } else {
+                Text(title)
+            }
+        }
+    }
+
+    private func lookLabel(_ title: String, detail: String?, isOn: Bool, hasMenu: Bool) -> some View {
+        HStack(spacing: 3) {
+            Text(detail.map { "\(title) · \($0)" } ?? title)
+                .lineLimit(1)
+            if hasMenu {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .bold))
+            }
+        }
+        .font(.footnote.weight(isOn ? .semibold : .regular))
+        .foregroundStyle(isOn ? Color.black : Color.white)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(Capsule().fill(isOn ? Color.yellow : Color.white.opacity(0.15)))
+        .contentShape(Capsule())
     }
 
     // MARK: 렌즈
@@ -435,8 +506,7 @@ struct CaptureView: View {
             thumbnailImage
         }
         .buttonStyle(.plain)
-        .disabled(vm.lastThumbnail == nil)
-        .accessibilityLabel("마지막으로 촬영한 사진")
+        .accessibilityLabel("마지막 사진")
         .accessibilityHint("사진 앱을 엽니다")
     }
 
@@ -457,23 +527,13 @@ struct CaptureView: View {
 
     // MARK: 인물 버튼
 
-    /// 셔터 오른쪽: 인물 모드 원형 버튼(켜짐 = 노란 채움·검정 아이콘) + 후처리 배지(버튼 위 작은 뱃지) + 얼굴 수(버튼 아래).
+    /// 셔터 오른쪽: 후처리 배지 + 얼굴 수. 인물 모드 켜기/끄기는 [원본]/[인물 ▾]/[배경 ▾] 메뉴로 옮겼다.
+    /// TODO(R2-S1): 이 자리에 [효과] 버튼.
     private var portraitControl: some View {
         VStack(spacing: 4) {
-            Button {
-                services.portraitModeEnabled.toggle()
-            } label: {
-                Image(systemName: "face.smiling")
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(services.portraitModeEnabled ? Color.black : Color.white)
-                    .frame(width: 52, height: 52)
-                    .background(Circle().fill(services.portraitModeEnabled ? Color.yellow : Color.white.opacity(0.18)))
-            }
-            .buttonStyle(.plain)
-            .overlay(alignment: .topTrailing) { processingBadge }
-            .accessibilityLabel("인물 모드")
-            .accessibilityValue(services.portraitModeEnabled ? "켜짐" : "꺼짐")
-            .accessibilityAddTraits(services.portraitModeEnabled ? .isSelected : [])
+            Color.clear
+                .frame(width: 52, height: 52)
+                .overlay(alignment: .topTrailing) { processingBadge }
 
             // 인물 보정 중인 얼굴 수(PLAN §3.3 "지금 인물 보정 중" 표시). 자리를 유지해 버튼이 흔들리지 않게 한다.
             Text(faceCountText)
