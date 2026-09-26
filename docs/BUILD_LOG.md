@@ -11,6 +11,16 @@
 
 ---
 
+## 2026-09-27 02:00 · 커밋 093c504 → (이번 커밋) · build.sh | test.sh | install-device.sh · R3-S1~S4
+결과: **성공** (build 오류 0, 경고 = AVMutableVideoComposition iOS 26 deprecated(동작 무관) · test **245/245**, skip 1). 실기기 설치 완료
+- R3-S1 영상 촬영: `VideoRecorder`(보정된 CIImage → 1080×1920 HEVC 12Mbps + AAC), 녹화 중엔 파이프라인을 1920 해상도로. **발견·수정**: 오디오 입력을 writer에 안 붙였을 때 `markAsFinished` 호출 → NSInternalInconsistencyException(마이크 권한 거부 시 실기기에서도 종료됐을 것)
+- 시뮬레이터 HEVC는 소프트웨어 인코딩이라 실시간 입력이 일부 버려짐(테스트 기준 완화). 실기기에서 녹화 fps·발열 확인 필요
+- R3-S2 쇼츠: 템플릿 10개(코드 고정, `ShortsProject.templateKey` 추가 — SwiftData 경량 마이그레이션), 프로젝트 여러 개, 칸별 앨범 가져오기(PhotosPicker itemIdentifier)
+- R3-S3 칸 촬영: `SlotCaptureView` — CaptureViewModel 재사용(영상 모드), 가이드 오버레이, 앞 칸 마지막 프레임 35% 겹치기, 3초 카운트다운, 칸 길이+1초 자동 정지, 앞 0.3초 건너뜀
+- R3-S4 조립: 두 트랙 번갈아 배치 + 자체 `AVVideoCompositing`(컷·디졸브·휙 패닝·줌 인·위로 넘기기), preferredTransform 방향 맞춤(픽셀 테스트), 9:16 채우기, `AVAssetExportPresetHEVC1920x1080` → 사진 앱
+- 사용자 보고 "예기치 않게 종료" 알림 2회: Mac에서 뜬 것(드로스테 확인용 임시 프로그램 fatalError, 시뮬레이터 테스트 호스트 위 예외). 앱과 무관, 원인 수정
+실기기 확인할 것: 영상 녹화 fps·발열·소리, 칸 촬영 가이드 모양·위치, 앞 장면 겹치기 정렬(전면 카메라 미러), 조립 미리보기 재생·내보내기 시간·결과 방향
+
 ## 2026-09-27 00:10 · 커밋 898f3d0 · 릴리즈 판정
 결과: **릴리즈 1(카메라)·릴리즈 2(효과) 완료** — 사용자 실기기 사용 후 결정("나쁘지 않음, 지금까지 한 걸 2차 릴리즈로"). 마지막 빌드 test 232/232
 미측정으로 남긴 것: HANDOFF "릴리즈 1·2 후속 측정"(야간 저조도·20분 연속·16:9 fps·3D 스티커 지연·고개 방향·단체 사진·전신 보정)

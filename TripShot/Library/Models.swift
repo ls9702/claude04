@@ -189,9 +189,11 @@ final class ShortsProject {
     var musicTrackID: UUID?
     var musicStartSeconds: Double
     var exportedAssetLocalID: String?
+    /// 쇼츠 템플릿 키(R3-S2, `ShortsTemplateLibrary`). nil이면 예전 방식(샷 템플릿) 프로젝트.
+    var templateKey: String? = nil
     @Relationship(deleteRule: .cascade, inverse: \Clip.project) var clips: [Clip]
 
-    init(title: String, format: FormatPreset, template: ShotTemplate?) {
+    init(title: String, format: FormatPreset, template: ShotTemplate?, templateKey: String? = nil) {
         self.id = UUID()
         self.title = title
         self.createdAt = .now
@@ -201,7 +203,18 @@ final class ShortsProject {
         self.musicTrackID = nil
         self.musicStartSeconds = 0
         self.exportedAssetLocalID = nil
+        self.templateKey = templateKey
         self.clips = []
+    }
+
+    /// 칸 번호의 클립(없으면 nil).
+    func clip(forSlot index: Int) -> Clip? {
+        clips.first { $0.shotIndex == index }
+    }
+
+    /// 템플릿 칸 중 채워진 수.
+    func filledSlotCount(of template: ShortsTemplate) -> Int {
+        template.slots.filter { clip(forSlot: $0.index) != nil }.count
     }
 
     var status: ProjectStatus {
