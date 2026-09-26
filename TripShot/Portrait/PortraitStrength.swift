@@ -41,6 +41,12 @@ enum PortraitStrength: String, CaseIterable, Identifiable {
         }
     }
 
+    /// 칩에 묶인 다섯 값 중 하나라도 다른지.
+    static func chipValuesDiffer(_ a: PortraitParams, _ b: PortraitParams) -> Bool {
+        a.skinSmooth != b.skinSmooth || a.faceSlim != b.faceSlim || a.eyeEnlarge != b.eyeEnlarge
+            || a.teethWhiten != b.teethWhiten || a.skinBrighten != b.skinBrighten
+    }
+
     /// 최종 인물 값 규칙(순수 함수). 인물 모드가 켜져 있을 때 칩·직접 값이 프리셋 값보다 우선한다.
     /// - `base.enabled == false`("원본" 등)면 base 그대로 — 원본 선택이 인물 값 때문에 "보정 있음"이 되지 않게.
     /// - 직접 값(`custom`)이 있으면 그 값(단, `enabled`는 base를 따른다).
@@ -49,6 +55,7 @@ enum PortraitStrength: String, CaseIterable, Identifiable {
         guard base.enabled else { return base }
         if var c = custom {
             c.enabled = base.enabled
+            c.backgroundBlur = base.backgroundBlur   // 배경 흐림은 사진별 값(칩·직접 값과 무관)
             return c
         }
         var p = strength.params

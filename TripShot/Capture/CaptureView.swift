@@ -69,7 +69,7 @@ struct CaptureView: View {
             vm.configure(services: services)
             vm.syncPresets(presets)
             let cam = await Permissions.requestCamera()
-            _ = await Permissions.requestMicrophone()
+            // 마이크 권한은 영상 녹화(릴리즈 2)에서 요청한다. 릴리즈 1(사진)은 첫 실행에 묻지 않는다.
             permissionDenied = !cam
             // 위치는 "앱 사용 중" 권한만 요청한다. 거부해도 위치 없이 촬영·저장된다(PLAN §3.4).
             services.locationProvider.start()

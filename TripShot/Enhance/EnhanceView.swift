@@ -381,7 +381,8 @@ private struct EnhanceScreen: View {
         Binding(get: { vm.currentParams }, set: { newValue in
             let oldPortrait = vm.currentParams.portrait
             vm.updateCurrentParams(newValue)
-            if newValue.portrait != oldPortrait { services.customPortrait = newValue.portrait }
+            // 배경 흐림은 칩·직접 값에 묶이지 않으므로(사진별 값), 칩 5값(피부·윤곽·눈·치아·피부톤)이 바뀔 때만 직접 값으로 보관한다.
+            if PortraitStrength.chipValuesDiffer(newValue.portrait, oldPortrait) { services.customPortrait = newValue.portrait }
         })
     }
 

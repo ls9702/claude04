@@ -209,12 +209,15 @@ final class CameraService: NSObject, ObservableObject {
         sessionObservers.append(center.addObserver(forName: AVCaptureSession.runtimeErrorNotification,
                                                    object: session, queue: nil) { [weak self] note in
             guard let self else { return }
-            let error = note.userInfo?[AVCaptureSessionErrorKey] as? AVError
-            Self.log.error("세션 런타임 오류: \(error?.localizedDescription ?? "-", privacy: .public)")
+            // NSError → AVError 브리징이 실패하면 판정이 항상 false가 되므로 domain/code로 직접 본다(전체 리뷰 수정).
+            let nsError = note.userInfo?[AVCaptureSessionErrorKey] as? NSError
+            let isMediaReset = nsError?.domain == AVFoundationErrorDomain
+                && nsError?.code == AVError.Code.mediaServicesWereReset.rawValue
+            Self.log.error("세션 런타임 오류: \(nsError?.localizedDescription ?? "-", privacy: .public)")
             self.sessionQueue.async {
                 guard self.wantsRunning else { return }
                 // 미디어 서비스 재설정은 매번 재시작, 그 밖의 오류는 한 번만 시도한다(무한 재시작 방지).
-                let isReset = error?.code == .mediaServicesWereReset
+                let isReset = isMediaReset
                 guard isReset || !self.runtimeRestartTried else {
                     DispatchQueue.main.async { self.lastError = UserMessage.text(for: CameraError.runtime) }
                     return

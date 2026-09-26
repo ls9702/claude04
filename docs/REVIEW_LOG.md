@@ -4,6 +4,73 @@
 
 ---
 
+## 릴리즈 1 전체 리뷰 · 2026-09-26 · 커밋 4e2729f · 결과: **통과 (필수 위반 없음 · 수정 권고 3건은 Mac 빌드 전후에 처리)**
+
+범위: `TripShot/**/*.swift`·`*.metal`, `TripShotTests/**`, `project.yml` 전체(약 9,100줄). 기준: REVIEW_CHECKLIST 필수 5항+품질, PLAN §3·§5·§8.2, CLAUDE.md 코드 규칙, BUILD_LOG(시뮬레이터 121/121, iPhone 12 Pro 관찰). **주의: babd77c 이후 커밋(S8a·S8b·S8c, 38파일 +4,160/−271)은 아직 Mac에서 빌드되지 않았다.** 아래 "컴파일 의심"은 각 단계 REVIEW_LOG에 이미 적힌 것 밖의 지점만 적었다.
+
+### 지휘 세션 반영 (커밋 fix(R1-S8c))
+- 중간 ① 반영: `PortraitStrength.effective` custom 분기에서 `backgroundBlur = base.backgroundBlur`, 앨범 인물 슬라이더는 칩 5값이 바뀔 때만 `customPortrait` 갱신(`chipValuesDiffer`).
+- 중간 ② 반영: `CameraService` 런타임 오류를 `NSError` domain/code로 판정.
+- 중간 ③ 반영: 릴리즈 1에서 마이크 권한 요청 제거(릴리즈 2 영상 녹화 시 요청).
+- 단계 간 불일치: 수평 자동 보정·JPEG 선택은 PLAN §9(미룬 것)에 명시. 낮음 5건과 죽은 코드 정리는 Mac 빌드 결과와 함께 처리.
+
+### 필수 위반
+- 없음.
+  - 사진 보관함·앱 내부 저장: 사진이 앱 샌드박스에 남는 경로 없음. `Backup.writeTemporaryFile`은 JSON만, 썸네일·프리뷰는 메모리(NSCache 10장, `EnhanceViewModel.swift:221`)뿐.
+  - EXIF·GPS·날짜: 비파괴(`PhotoSaver.swift:321-364`)는 에셋 유지+`ImageMetadata.preservedProperties`(Exif·GPS·TIFF·IPTC·ExifAux·MakerApple, Orientation 1) 복사, 사본(`373-411`)은 `creationDate`·`location` 명시, 촬영(`420-438`)은 바이트 그대로+`AVCapturePhotoSettings.metadata` GPS(`CameraService.swift:516-523`). 실기기에서 위치·날짜 확인됨(BUILD_LOG 09-26).
+  - 원본 손상: 모든 경로가 `performChanges` 전에 throw, 삭제 API 호출 없음. 이전 TripShot 편집은 `canHandleAdjustmentData`로 원본에서 재렌더(누적 없음).
+  - 외부 패키지: `project.yml` packages는 YouTubeKit만. S8a에서 `UIRequiresFullScreen` 제거 외 변경 없음.
+  - 큐 분리: 세션 조작은 `sessionQueue`, 프레임은 `videoQueue`, `@Published`는 `DispatchQueue.main`/`@MainActor`/`onMain`/`receive(on:)`로만 변경(CameraService·LocationProvider·DeviceStatusMonitor·CaptureViewModel·EnhanceViewModel 확인). 비디오 큐 콜백은 `nonisolated static`으로 만들어 메인 액터 객체를 캡처하지 않음(`CaptureViewModel.swift:162-178`).
+  - 권한 거부: 카메라(`CaptureView.swift:29,126-137` 안내 화면), 사진(`PhotoSaveError.notAuthorized` → 문구, `EnhanceViewModel.swift:281-285`), 위치(`LocationProvider` 조용히 nil), 마이크(무시). 크래시 경로 없음. 시뮬레이터(카메라 없음)는 `configured=false`로 start가 no-op.
+  - 설계 일치: 파이프라인 순서 1~7 고정(`EnhancePipeline.swift:63-90`), 인물 순서 워프→피부→배경 흐림, 저조도·배경 흐림은 `.full`만, 프리뷰=저장 동일 params·context. 차이(라이브 clarity 생략·다운샘플 방식·자동 분석 주기)는 주석으로 문서화됨.
+
+### 버그
+- 중간 — `TripShot/Enhance/EnhanceView.swift:384` + `TripShot/Portrait/PortraitStrength.swift:50-53`: 앨범 인물 슬라이더는 **배경 흐림을 포함한** `portrait` 전체를 `services.customPortrait`에 저장하고, `PortraitStrength.effective`는 custom이 있으면 custom의 `backgroundBlur`를 그대로 쓴다 → 앨범에서 배경 흐림을 만지면 촬영 탭 `params.portrait`(`CaptureViewModel.refreshPortrait`)에도 흐림이 들어가 이후 촬영 후처리에 **라이브에 보이지 않던 흐림이 저장**되고 칩이 "직접"으로 바뀐다(반대로 프리셋의 backgroundBlur는 custom이 있으면 사라진다). → `effective`에서 custom 분기에도 `c.backgroundBlur = base.backgroundBlur`, 바인딩은 칩 5값(피부·윤곽·눈·치아·피부톤)이 바뀔 때만 `customPortrait` 갱신. 배경 흐림은 사진별 값으로만 둔다.
+- 중간 — `TripShot/Capture/CameraService.swift:212,217`: `note.userInfo?[AVCaptureSessionErrorKey] as? AVError` — userInfo 값은 `NSError`이고 `Any`→`AVError` 브리징 캐스트가 nil이면 `isReset`이 항상 false가 되어 미디어 서비스 재설정(통화 후 등)에서도 재시작을 한 번만 시도한다(추정, 런타임 동작 차이·컴파일은 될 가능성 높음). → `(… as? NSError).map { $0.domain == AVFoundationErrorDomain && $0.code == AVError.mediaServicesWereReset.rawValue }`로 판정.
+- 중간 — `TripShot/Capture/CaptureView.swift:72`: 릴리즈 1(사진 전용)인데 첫 실행에 **마이크 권한 프롬프트**가 뜬다(`Permissions.requestMicrophone`). 거부돼도 동작에 영향 없지만 사용자에게 불필요. → 호출을 R2-S1(영상 녹화)로 옮긴다.
+- 낮음 — `TripShot/Enhance/EnhanceViewModel.swift:341,668-673`: 비파괴 저장 성공 후에도 `touchedIDs`가 남아 `hasAdjustments == true` → 닫기(×)에서 "조정한 값이 사라집니다" 확인이 저장한 사진에도 뜬다. → `finishSave`에서 `succeededIDs`를 `touchedIDs`에서 제거.
+- 낮음 — `TripShot/Settings/SettingsView.swift:182-185`: 설정 탭 첫 진입이 `services.lowLight`(lazy) → Core ML 모델 로드를 **메인에서** 유발(수십~수백 ms 멈칫). `AppServices.swift:43-48`. → `AppServices.init`에서 `Task.detached`로 프리로드하거나 설정 표시는 `Task`로 읽기.
+- 낮음 — `TripShot/Library/PhotoSaver.swift:455-463,469-470`: 원본을 `Data`로 전부 읽은 뒤 `CIImage(data:)`로 다시 디코드, HEIF는 `.RGBA16` CGImage(4032×3024 ≈ 97MB)까지 동시 보유 → 12MP 한 장당 피크 약 150MB(잠금으로 1장씩이라 위험은 낮음). → 속성은 `CGImageSourceCreateWithURL`, 이미지는 `CIImage(contentsOf:)`로 바꾸면 Data 사본이 사라진다.
+- 낮음 — `TripShot/Enhance/EnhanceViewModel.swift:413-420`: `updateCurrentPortrait`가 `updateCurrentParams`(디바운스 렌더 예약) 직후 `scheduleRender(debounce:false)`를 또 걸어 첫 예약을 취소함 — 결과는 맞지만 중복. → `updateCurrentParams` 호출을 직접 갱신으로 바꾸거나 두 번째 호출 제거.
+- 낮음 — `TripShot/Capture/CaptureViewModel.swift:534-540`: 얼굴 마커 루프가 `rects`가 비면 `faceMarkerImageSize`를 갱신하지 않아 카메라 전환(3:4 유지)엔 문제없지만 프레임 크기가 바뀐 직후 첫 마커가 이전 크기 기준으로 한 프레임 그려질 수 있음(0.25초, 시각적 영향 미미).
+
+### 컴파일 의심 (각 단계 로그에 없는 것만 · Mac 빌드에서 확인)
+- `TripShot/Capture/CameraService.swift:212` — `as? AVError`(위 버그 항목). 컴파일은 되더라도 판정 실패 가능.
+- `TripShot/Library/Backup.swift:215-217,269,288,306,342` — `FetchDescriptor<Preset>(sortBy: [SortDescriptor(\.sortOrder)])`의 축약 키패스 추론. 실패하면 `\Preset.sortOrder`처럼 루트 타입 명시(추정, 낮음).
+- `TripShot/Capture/DeviceStatusMonitor.swift:121` — `center.publisher(for: .NSProcessInfoPowerStateDidChange)`: 이름은 `NSNotification.Name.NSProcessInfoPowerStateDidChange`로 존재. 추론 실패 시 `Notification.Name.NSProcessInfoPowerStateDidChange`로.
+- `TripShot/Capture/DeviceStatusMonitor.swift:149-150` — `URLResourceValues.volumeAvailableCapacityForImportantUsage`(`Int64?`) 타입 일치(추정 OK).
+- `TripShot/Capture/CaptureView.swift:264-289` — `@ViewBuilder var` 안 `if let … { let collapsed = … ; Button … }` 지역 `let`(Swift 5.4+ 허용, 추정 OK). `:100` `.onChange(of: [DeviceWarning.Kind])` Equatable OK.
+- `TripShot/Settings/SettingsView.swift:44-52` — `confirmationDialog` message 클로저의 `if let`(ViewBuilder) / `:154` `ShareLink(item: URL)` / `:111,164,181-187` `LabeledContent(String, value: String)` — 모두 iOS 16+ API, 추정 OK.
+- `TripShot/App/SigningInfo.swift:75-76` — `data.range(of: Data, in: Range)` 라벨(options 생략) 추정 OK.
+- `TripShot/Capture/CaptureViewModel.swift:117-121,128-137` — `camera.$isFrontCamera`(S8a 기록됨)와 같은 패턴의 `deviceStatus.$thermalState`·`$isLowPowerMode`(`private(set)` @Published의 `$`). 하나가 실패하면 셋 다 같은 수정(`private(set)` 제거 또는 `objectWillChange` 경유).
+- `TripShot/Enhance/EnhanceViewModel.swift:509-513,545-558` — `@MainActor` 클래스 안 `Task.detached` + `withTaskCancellationHandler { await job.value } onCancel: { job.cancel() }`(S3에서 같은 패턴 컴파일됨, OK).
+- `TripShot/Portrait/BackgroundBlur.swift:87-91` — `CIContext.render(_:toBitmap:rowBytes:bounds:format:colorSpace:)`에 `colorSpace: nil`(옵셔널 인자, OK).
+- 테스트: `TripShotTests/ReleaseTests.swift`·`PortraitUXTests.swift`·`CameraLensTests.swift`·`SkinBrightenTests.swift`(+약 70개, 총 약 190개 추정) 미빌드. `AppServices(defaults: UserDefaults(suiteName:))`로 격리됨(`.standard` 오염 없음) 확인.
+
+### 단계 간 불일치
+- **PLAN §3.2 7단계 "수평 자동 보정(Vision 수평선 검출)" 미구현**: `PipelineContext.horizonAngle`을 채우는 코드가 없고 모든 저장 호출이 `horizonAngle: nil`(`EnhanceViewModel.swift:115,117,133,135`, `CaptureViewModel.swift:472`), `PresetParams.autoHorizon`(`Models.swift:21`)은 어디서도 true가 되지 않는다(`applyHorizon`·크롭 계산·테스트만 존재). R1-S1 완료 기준엔 "수평" 파이프라인 단계만 있었으므로 위반은 아니나, **릴리즈 1에서 빠진 기능**으로 PLAN §9(미룬 것) 또는 HANDOFF "논의 필요"에 명시 필요.
+- PLAN §3.4 "촬영은 HEIF(기본) 또는 JPEG 선택", §5 설정 "촬영 옵션(해상도·포맷)": 포맷 선택 없음(`CameraService.swift:506-510` HEVC 가능하면 고정). 릴리즈 1 범위 결정 기록 필요.
+- `CameraService.swift:159-161,638-652`: `locationProvider`·`photoSaver`가 옵셔널이고 미주입 시 폴백 저장 경로(PHAssetCreationRequest 직접)가 남아 있으나 앱은 항상 주입(`CaptureViewModel.configure`) → 죽은 코드. 폴백을 지우고 비옵셔널로 하면 `postCaptureHandler` 누락 경로도 사라진다.
+- `PhotoSaving`(`EnhanceViewModel.swift:102-125`): 프로토콜 요구 `saveNonDestructive/saveAsCopy(3인자)`는 앱에서 기본 구현만 사용하고 FakeSaver는 `XCTFail`로 채움. ViewModel은 4인자 `save`를 호출하고 기본 구현이 3인자 요구사항으로 동적 디스패치 → 테스트 대역과 정합(확인). 정리하려면 요구사항을 `save(item:mode:params:context:)` 하나로 줄인다.
+- hook·컨텍스트 시그니처 정합 확인(문제 없음): `PortraitStage.full(detector:kernels:segmentationPreview:)`·`.live(tracker:kernels:)` ↔ `AppServices.pipelineContext`; `LowLightStage.make(enhancer:)` ↔ `PipelineContext.lowLightStage`; `EnhanceRenderer.previewImage(from:params:maxDimension:context:)` ↔ `EnhanceViewModel.scheduleRender`; `PhotoSaver.saveNonDestructive(asset:params:horizonAngle:context:)` ↔ `CaptureViewModel.run`; `SmoothedFaceTracker.normalizedRects`·`lastFaceRects` ↔ `EnhanceViewModel.detectFaceRects`·`CaptureViewModel.startMarkers`; `MetalPreviewView.fitRect` ↔ `FaceZoomGeometry`·`FaceMarkerGeometry`; `PortraitParams` 필드 7개 ↔ `AdjustmentKind.keyPath`·`PortraitStrength`·`SettingsExport`; `CameraFormatPicker.pick`·`LensZoom` ↔ `CameraService`. `Mapping.referenceDimension`(1024)·`PreviewQuality.baseDimension`(768)·`EnhanceViewModel.previewDimension`(1024)은 `resolutionScale`로 정합.
+- 오류 문구 위임(`PhotoSaveError`·`EnhanceSaveError`·`CameraError`·`BackupError`.`errorDescription` → `UserMessage.text(for:)`): `text(for:)`가 각 타입을 먼저 매칭하므로 재귀 없음(확인).
+
+### 권고
+- (수정 권고, 릴리즈 전) 위 "중간" 3건: 배경 흐림의 custom 전파 차단, `AVError` 판정, 마이크 권한 R2로 이동.
+- `EnhanceViewModel.startRestoreIfNeeded`(`:570-585`) → `PhotoImageLoader.previousAdjustment`가 표시하는 사진마다 `PHContentEditingInput`을 네트워크 허용으로 요청해 iCloud 전용 원본을 통째로 내려받는다(알려진 TODO). 여행 중 셀룰러를 고려해 복원 확인은 `isNetworkAccessAllowed = false`로 두고, 저장 시에만 내려받는 쪽을 권한다.
+- 앨범 프리뷰 렌더가 `EnhanceRenderer` 잠금을 촬영 후처리(12MP, 1~3초)와 공유한다(`EnhanceRenderer.swift:55,87`). 촬영 직후 보정 탭으로 가면 슬라이더 반응이 후처리 끝날 때까지 멈춘다 — 실기기에서 체감되면 프리뷰 전용 `CIContext`(MetalPreviewView처럼) 분리.
+- `MetalPreviewView.swift:122` 프리뷰 출력 sRGB(P3 화면) — 저장본과 채도 차이가 보이면 TODO대로 `CAMetalLayer.colorspace = displayP3`. `PhotoSaver.swift:468` 16비트→HEIC 10비트 기록 여부 TODO 유지.
+- 죽은 코드: `CameraPreviewView.swift`(폴백으로 문서화됨, 유지 가능), `CameraService` 미주입 폴백(위), `EnhanceRenderer.previewImage(from:params:maxDimension:)` 컨텍스트 없는 오버로드(앱 미사용, 테스트 전용 추정).
+- `try?` 점검: `SettingsView.swift:241` 프리셋 삭제 `save` 실패 무음, `Models.swift:77` 프리셋 디코드 실패 시 기본값으로 조용히 대체(손상 프리셋이 "자동"처럼 보임) — 낮음, 로그 한 줄 권장. 그 밖의 `try?`는 폴백·로그가 있다.
+- 한국어 UI 문자열·주석: 전 파일 충족. 파일 위치: 모듈 폴더 규칙 충족, `.gitkeep` 없음.
+
+### 종합 판단
+- **릴리즈 1 체크포인트로 보낼 수 있다.** 필수 위반 없음, 원본·메타데이터 원칙 준수, 큐 규칙 준수. 다만 S8a·S8b·S8c 약 4,160줄이 미빌드이므로 "통과"는 리뷰 기준이며 Mac 빌드가 릴리즈 게이트다. 중간 3건은 클라우드 세션이 Mac 빌드 결과와 함께 `fix(R1-S8c)`로 처리하기를 권한다.
+- Mac에서 먼저 볼 것 3개:
+  1. **빌드**: `scripts/build.sh` → 오류는 S8a·S8b 로그의 "컴파일 확신이 낮은 지점" + 위 "컴파일 의심" 순으로(`$isFrontCamera`류 `private(set)` `$`, `PortraitParams` CodingKeys/extension `init(from:)`, `VNGeneratePersonSegmentationRequest.outputPixelFormat`, `as? AVError`, `SortDescriptor(\.sortOrder)`). `scripts/test.sh` 기대 약 190개.
+  2. **실기기 낮**: 활성 포맷 로그 "1920x1440 … 사진 4032x3024"·"촬영 사진 크기 4032x3024", 768px에서 fps·버림·10분 발열 재측정, 렌즈 0.5×/1×/2×·전면 전환(프리뷰 미러·저장 사진 비반전·탭 노출 위치·얼굴 마커 좌우), 인물 모드에서 배경 흐림 방향(사람이 아니라 배경이 흐려지는지, `BackgroundBlur.swift:133` TODO)과 `hasPerson` 판정, 24fps 설정·저전력 모드 전환 시 예외 없음(`applyFrameRate` min/max 순서).
+  3. **실기기 밤**: 야경 프리셋 저장 3초 이내·설정 "마지막 저조도 경로: 모델"·과노출/색 편이, 어두운 곳 프리뷰 밝기(최대 프레임 간격 1/15 수정 확인), 20분 연속 촬영 후 프리뷰 멈춤 감시(`PreviewStallDetector`)·세션 중단(전화) 복귀 안내.
+
 ## R1-S8b 인물 모드 기능·UX · 2026-09-26 · 서브에이전트(Opus 5.5) 작성분 · 결과: **통과 (수정 없음)**
 
 ### 필수 항목
