@@ -11,6 +11,21 @@
 
 ---
 
+## 2026-09-26 14:30 · 커밋 babd77c · install-device.sh · **iPhone 12 Pro 첫 설치·실기기 관찰**
+결과: **성공** — 설치·실행 정상. 실기기 관찰 아래. 저조도(C)는 주간이라 미측정
+환경: iPhone 12 Pro (iPhone13,3) iOS 27.0, 개발자 모드 켬, 무료 서명(Personal Team, 7일). Xcode 27.0 명령줄 빌드가 인증서·프로파일 자동 생성
+설치 절차에서 만난 것 (모두 해결, `fix(R1-S7)` babd77c):
+- 개발자 모드 메뉴는 Xcode가 있는 Mac에 케이블 연결·페어링 후에야 iPhone 설정에 나타남. Devices 창 없이 `xcrun devicectl list devices`로 인식 확인 가능
+- `install-device.sh`: `project.yml`의 DEVELOPMENT_TEAM이 비어 있어 명령줄 서명 불가 → 팀 ID를 `scripts/team.local`(gitignore)에서 읽도록 수정. `-quiet` 빌드 성공 시 grep 무출력 → pipefail로 설치 전에 스크립트가 끊기던 버그 수정
+- 첫 실행은 "신뢰하지 않는 개발자" → 설정 > 일반 > VPN 및 기기 관리에서 신뢰 후 정상
+실기기 관찰 (사용자 확인):
+- **S4 라이브**: 프리뷰 방향·색 정상, 탭 포커스·핀치 줌 동작, 촬영 → 사진 앱 "편집됨"·되돌리기·위치·날짜 정상, 가로 촬영 방향 정상, 연속 5장 정상. 프리셋 전환 시 프리뷰 즉시 반영(흑백 확인)
+- **S4 성능**: DEBUG 통계 **`20fps · 버림 11+1 · 768px`** — 이미 열 상태 serious(1024→768px 하향)인데도 20fps, 초당 11프레임 GPU 백프레셔 버림 + 카메라 버림 1. **30fps 목표 미달, 발열 심함**(사용자: "발열이 심하긴 하나 되긴 함"). 프리셋별 fps 차이는 없음. 촬영 탭 10분 사용 후 발열 뚜렷
+- **S5·S6 인물**: 라이브는 미확인. 앨범 사진 보정(full 경로)은 "잘 됨"
+- **S7 저조도**: 설정 탭 "저조도 모델: **있음**" 확인(실기기 `.all` 경로 모델 로드 OK). 야경 저장 품질·3초 기준은 **야간 재측정 필요**. 출력이 0이 아닌지도 그때 확인
+- **보정 탭 일괄 저장**: 동작함(소요 시간 미측정)
+튜닝 제안(클라우드 세션 R1-S8 검토): (1) `PreviewQuality.baseDimension` 1024 → 768 또는 640을 기본으로(768에서도 20fps라 더 낮춰야 30fps 근접 가능성), (2) `LivePipeline.autoRefreshInterval` 15 → 30, (3) 라이브에서 clarity/sharpness(공간 필터) 반경 축소 또는 생략, (4) 프레임 처리 fps 자체를 30→24로 제한해 발열 완화. Mac 세션은 실측 없이 값을 바꾸지 않고 기록만 남김
+
 ## 2026-09-26 10:30 · 커밋 f61c7ac(+fix) · build.sh | test.sh | 모델 변환 · 시뮬레이터
 결과: **성공** (build 오류 0 · test **121/121** 통과, skip 0 · Zero-DCE++ 모델 변환·번들 확인). 실기기 설치는 **아직**(아래)
 환경: macOS 26.6.2, Xcode 27.0 (27A266a) + **Metal Toolchain 27A266a 추가 설치**, iOS 27.0 시뮬레이터 iPhone 17. Python 3.12 venv(torch 2.14, coremltools 9.x)
