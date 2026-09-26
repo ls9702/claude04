@@ -224,8 +224,9 @@ final class CameraService: NSObject, ObservableObject {
             device.activeFormat = formats[index]
             device.unlockForConfiguration()
             let info = infos[index]
-            let photo = CameraFormatPicker.largestPhotoDimensions(info.maxPhotoDimensions)
-            Self.log.notice("활성 포맷 \(info.width)x\(info.height) 최대 \(Int(info.maxFrameRate))fps, 사진 \(photo?.width ?? 0)x\(photo?.height ?? 0), binned=\(info.isBinned)")
+            let photo = CameraFormatPicker.largestPhotoDimensions(info.maxPhotoDimensions) ?? PixelSize(width: 0, height: 0)
+            let summary = "\(info.width)x\(info.height) 최대 \(Int(info.maxFrameRate))fps, 사진 \(photo.width)x\(photo.height), binned=\(info.isBinned)"
+            Self.log.notice("활성 포맷 \(summary, privacy: .public)")
         } else {
             if session.canSetSessionPreset(.photo) { session.sessionPreset = .photo }
             Self.log.notice("조건에 맞는 활성 포맷이 없어 .photo 프리셋으로 폴백")
@@ -297,7 +298,7 @@ final class CameraService: NSObject, ObservableObject {
         let photoDims = device.activeFormat.supportedMaxPhotoDimensions
         if let best = photoDims.max(by: { Int($0.width) * Int($0.height) < Int($1.width) * Int($1.height) }) {
             photoOutput.maxPhotoDimensions = best
-            Self.log.notice("사진 최대 크기 \(best.width)x\(best.height)")
+            Self.log.notice("사진 최대 크기 \(Int(best.width))x\(Int(best.height))")
         }
 
         // 시그니처: AVCaptureDevice.virtualDeviceSwitchOverVideoZoomFactors: [NSNumber] (가상 기기가 아니면 빈 배열)
@@ -326,21 +327,23 @@ final class CameraService: NSObject, ObservableObject {
         }
     }
 
-    /// 프레임 레이트 고정(최소·최대 프레임 간격 = 1/fps). 호출 측이 `lockForConfiguration`을 잡고 부른다.
-    /// 활성 포맷이 그 fps를 지원하지 않으면 바꾸지 않는다.
-    /// TODO(검증): 최대 간격도 1/fps로 묶으면 어두운 곳에서 프리뷰 노출 시간이 1/fps로 제한된다(프리뷰가 어둡거나 노이즈).
-    ///            실기기 야간 확인 후 필요하면 최대 간격만 풀어(kCMTimeInvalid) 자동 저하를 허용한다. 사진 노출은 별개.
+    /// 프레임 레이트 상한(최소 프레임 간격 = 1/fps). 최대 간격은 1/15까지 허용해 어두운 곳에서 자동 노출이
+    /// 프레임 레이트를 낮춰 노출 시간을 늘릴 수 있게 한다(리뷰 수정: 최대 간격까지 1/fps로 묶으면 야간 프리뷰가 어둡고 노이즈가 커진다).
+    /// 호출 측이 `lockForConfiguration`을 잡고 부른다. 활성 포맷이 그 fps를 지원하지 않으면 바꾸지 않는다.
     private func applyFrameRate(_ fps: Double, to device: AVCaptureDevice) {
-        let supported = device.activeFormat.videoSupportedFrameRateRanges.contains {
-            $0.minFrameRate <= fps + 0.01 && fps <= $0.maxFrameRate + 0.01
-        }
+        let ranges = device.activeFormat.videoSupportedFrameRateRanges
+        let supported = ranges.contains { $0.minFrameRate <= fps + 0.01 && fps <= $0.maxFrameRate + 0.01 }
         guard supported else {
             Self.log.notice("활성 포맷이 \(fps)fps를 지원하지 않아 프레임 레이트를 그대로 둠")
             return
         }
-        let duration = CMTime(value: 1, timescale: CMTimeScale(fps.rounded()))
-        device.activeVideoMinFrameDuration = duration
-        device.activeVideoMaxFrameDuration = duration
+        let minDuration = CMTime(value: 1, timescale: CMTimeScale(fps.rounded()))
+        // 어두운 곳의 자동 저하 하한: 포맷이 허용하는 최저 fps와 15 중 큰 값.
+        let lowestSupported = ranges.map(\.minFrameRate).min() ?? fps
+        let floorFps = min(fps, max(15, lowestSupported))
+        let maxDuration = CMTime(value: 1, timescale: CMTimeScale(floorFps.rounded()))
+        device.activeVideoMinFrameDuration = minDuration
+        device.activeVideoMaxFrameDuration = maxDuration
     }
 
     func start() {
@@ -462,7 +465,7 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
         let uniqueID = photo.resolvedSettings.uniqueID
         // 실기기 체크포인트: 사진이 풀해상도(12 Pro 4032x3024)로 찍히는지(활성 포맷을 작은 비디오 포맷으로 골랐으므로).
         let dims = photo.resolvedSettings.photoDimensions
-        Self.log.notice("촬영 사진 크기 \(dims.width)x\(dims.height)")
+        Self.log.notice("촬영 사진 크기 \(Int(dims.width))x\(Int(dims.height))")
         let data = photo.fileDataRepresentation()
         sessionQueue.async { [self] in
             let location = pendingLocations.removeValue(forKey: uniqueID)
